@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR receiver</title>
+<style>
+:root { color-scheme: light dark; }
+body { font: 16px system-ui, sans-serif; max-width: 46rem; margin: 0 auto; padding: 1rem; line-height: 1.4; }
+video { width: 100%; max-height: 60vh; background: #000; border-radius: 6px; }
+button { font: inherit; padding: 6px 14px; margin: 4px 6px 4px 0; }
+#grid { display: flex; flex-wrap: wrap; gap: 3px; margin: 10px 0; }
+#grid span { width: 14px; height: 14px; border: 1px solid #888; border-radius: 2px; }
+#grid span.got { background: #2a9d4b; border-color: #2a9d4b; }
+#status { font-weight: 600; }
+#warn { color: #b3261e; }
+textarea { width: 100%; height: 7rem; font: 12px ui-monospace, monospace; }
+code { font-size: 0.9em; }
+</style>
+</head>
+<body>
+<h1>QR receiver</h1>
+<p>Press <b>Start camera</b> and point it at the sending screen. Frames can arrive in any order; each one is
+used once. When every frame is in, a file is offered for download. This page works offline.</p>
+
+<video id="video" playsinline muted></video>
+<canvas id="canvas" hidden></canvas>
+<p id="status">Not started.</p>
+<p id="warn"></p>
+<div id="grid"></div>
+<div>
+  <button id="start" type="button">Start camera</button>
+  <button id="reset" type="button">Reset</button>
+</div>
+
+<details>
+  <summary>No camera? Paste frames instead</summary>
+  <p>One frame per line, as written by <code>qr-send --mqr</code>.</p>
+  <textarea id="paste" aria-label="Pasted frames"></textarea>
+  <button id="usepaste" type="button">Use pasted frames</button>
+</details>
+
+<section id="done" hidden>
+  <h2>Received</h2>
+  <p id="summary"></p>
+  <p><a id="download" download="received.mqr">Download received file</a></p>
+  <p>Then run <code>node dist/qr-decode.js &lt;downloaded file&gt; &lt;output file&gt;</code>. If the download is blocked,
+  copy the text below into a file.</p>
+  <textarea id="out" readonly aria-label="Received frames"></textarea>
+</section>
+
+<script>/*JSQR*/</script>
+<script>
+(() => {
+  'use strict';
+
+  // BEGIN PURE
+  const FRAME_RE = /^MQR1:([a-z]{1,12}):([0-9a-f]{6}):(\d{1,4}):(\d{1,4}):([0-9a-f]{32}):([A-Za-z0-9_-]+)$/;
+  const MAX_FRAMES = 9999;
+
+  function parseFrame(text) {
+    const m = FRAME_RE.exec(String(text).trim());
+    if (!m) return null;
+    const index = Number(m[3]);
+    const total = Number(m[4]);
+    if (total < 1 || total > MAX_FRAMES || index < 1 || index > total) return null;
+    return { kind: m[1], session: m[2], index, total, hash: m[5], data: m[6], raw: String(text).trim() };
+  }
+
+  function b64urlToBytes(s) {
+    const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function hex(bytes) {
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  // END PURE
+
+  const $ = (id) => document.getElementById(id);
+  let stream = null;
+  let timer = null;
+  let current = null; // { kind, session, total, hash, frames: Map(index -> raw line) }
+
+  function say(text) { $('status').textContent = text; }
+  function warn(text) { $('warn').textContent = text; }
+
+  function drawGrid() {
+    const grid = $('grid');
+    grid.textContent = '';
+    if (!current) return;
+    for (let i = 1; i <= current.total; i++) {
+      const cell = document.createElement('span');
+      if (current.frames.has(i)) cell.className = 'got';
+      grid.appendChild(cell);
+    }
+  }
+
+  function reset() {
+    current = null;
+    $('done').hidden = true;
+    warn('');
+    drawGrid();
+    say(stream ? 'Scanning...' : 'Not started.');
+  }
+
+  async function finish() {
+    stopCamera();
+    const lines = [];
+    for (let i = 1; i <= current.total; i++) lines.push(current.frames.get(i));
+    let note = 'The checksum could not be checked here; qr-decode will check it.';
+    try {
+      if (window.crypto && crypto.subtle) {
+        const bytes = b64urlToBytes(lines.map((l) => parseFrame(l).data).join(''));
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+        note = hex(digest).slice(0, 32) === current.hash ? 'Checksum OK.' : 'CHECKSUM MISMATCH: scan again.';
+      }
+    } catch (e) {
+      note = 'The checksum could not be checked here; qr-decode will check it.';
+    }
+    const text = lines.join('\n') + '\n';
+    $('summary').textContent = 'kind=' + current.kind + ', session=' + current.session + ', ' +
+      current.total + ' frames. ' + note;
+    $('out').value = text;
+    const link = $('download');
+    link.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    link.download = 'received-' + current.kind + '-' + current.session + '.mqr';
+    $('done').hidden = false;
+    say('All ' + current.total + ' frames received.');
+  }
+
+  function accept(text) {
+    const f = parseFrame(text);
+    if (!f) { warn('A QR code was read, but it is not a transfer frame. Ignored.'); return; }
+    if (!current) {
+      current = { kind: f.kind, session: f.session, total: f.total, hash: f.hash, frames: new Map() };
+    } else if (f.session !== current.session || f.kind !== current.kind || f.total !== current.total || f.hash !== current.hash) {
+      warn('A frame from a different transfer (session ' + f.session + ') was seen and ignored. Press Reset to switch.');
+      return;
+    }
+    const seen = current.frames.get(f.index);
+    if (seen !== undefined) {
+      if (seen !== f.raw) warn('Frame ' + f.index + ' was seen twice with different contents. Keeping the first.');
+      return;
+    }
+    warn('');
+    current.frames.set(f.index, f.raw);
+    drawGrid();
+    say('Received ' + current.frames.size + ' of ' + current.total + ' frames.');
+    if (current.frames.size === current.total) finish();
+  }
+
+  function scanOnce() {
+    const video = $('video');
+    if (video.readyState < 2 || !video.videoWidth) return;
+    const canvas = $('canvas');
+    const scale = Math.min(1, 960 / video.videoWidth);
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = window.jsQR(image.data, image.width, image.height, { inversionAttempts: 'dontInvert' });
+    if (code && code.data) accept(code.data);
+  }
+
+  function stopCamera() {
+    if (timer) { clearInterval(timer); timer = null; }
+    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+  }
+
+  async function startCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      say('This browser does not offer camera access to this page.');
+      warn('Try another browser, or use the paste box below.');
+      return;
+    }
+    if (typeof window.jsQR !== 'function') { say('The QR decoder did not load.'); return; }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      const video = $('video');
+      video.srcObject = stream;
+      await video.play();
+      say('Scanning...');
+      timer = setInterval(scanOnce, 120);
+    } catch (e) {
+      say('The camera could not be started: ' + (e && e.message ? e.message : e));
+      warn('Check that a camera is connected and that this page is allowed to use it.');
+    }
+  }
+
+  $('start').onclick = () => { if (!stream) startCamera(); };
+  $('reset').onclick = reset;
+  $('usepaste').onclick = () => {
+    const lines = $('paste').value.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    for (const line of lines) accept(line);
+  };
+})();
+</script>
+</body>
+</html>

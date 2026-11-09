@@ -1,0 +1,31 @@
+
+# System & OS Files
+.DS_Store
+Thumbs.db
+
+# Environment & Security (NEVER commit secrets!)
+.env
+.env.local
+*.pem
+*.key
+
+# Build & Dependency Directories
+node_modules/
+dist/
+build/
+target/
+
+# Editor Settings
+.vscode/
+.idea/
+*.swp
+
+# Other project created items to ignore
+wallet-state-*.json
+*.snapshot.json
+tx.hex
+cold-public.json
+*.mqr
+*-qr.html
+received-*
+
