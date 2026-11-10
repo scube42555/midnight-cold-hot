@@ -1,0 +1,4 @@
+# One line ending everywhere, so the cold machine and the hot machine see identical files.
+* text=auto eol=lf
+*.sh text eol=lf
+.githooks/* text eol=lf

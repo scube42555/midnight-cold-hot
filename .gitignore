@@ -1,26 +1,12 @@
+# Build output and dependencies (rebuilt from the lockfile)
+node_modules
+dist
+*.tsbuildinfo
 
-# System & OS Files
-.DS_Store
-Thumbs.db
-
-# Environment & Security (NEVER commit secrets!)
+# Secrets and wallet data: NEVER commit. The pre-commit hook also blocks these by name.
 .env
-.env.local
-*.pem
-*.key
-
-# Build & Dependency Directories
-node_modules/
-dist/
-build/
-target/
-
-# Editor Settings
-.vscode/
-.idea/
-*.swp
-
-# Other project created items to ignore
+.env.*
+!.env.example
 wallet-state-*.json
 *.snapshot.json
 tx.hex
@@ -29,3 +15,13 @@ cold-public.json
 *-qr.html
 received-*
 
+# Cold bundle material: built per machine, large, and not source
+cold-bundle*
+*.tar.gz
+pylibs/
+wheels/
+__pycache__/
+
+# Editors, OS, logs
+.DS_Store
+*.log

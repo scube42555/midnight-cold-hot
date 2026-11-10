@@ -1,8 +1,7 @@
 import { Buffer } from 'node:buffer';
-import { HDWallet, Roles, createKeystore, validateMnemonic } from '@midnightntwrk/wallet-sdk';
+import { WalletSeeds, createKeystore, validateMnemonic } from '@midnightntwrk/wallet-sdk';
 import { mnemonicToSeedSync } from '@scure/bip39';
-import * as ledger from '@midnight-ntwrk/midnight-js-protocol/ledger';
-import { getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+import { NETWORK_ID } from './config.js';
 
 /**
  * Turn a BIP-39 recovery phrase into the 64-byte seed the HD wallet expects.
@@ -47,22 +46,31 @@ export const readSeed = (role: 'COLD' | 'SPONSOR'): Uint8Array => {
   throw new Error(`Set ${mnemonicName} (and ${passphraseName} if it has one) or ${seedName}.`);
 };
 
-/** Derive the three key sets the wallet needs from one seed (as in the docs' Node.js guide). */
-export const deriveWalletKeys = (seed: Uint8Array) => {
-  const hd = HDWallet.fromSeed(seed);
-  if (hd.type !== 'seedOk') throw new Error('Invalid seed');
-  const result = hd.hdWallet
-    .selectAccount(0)
-    .selectRoles([Roles.Zswap, Roles.NightExternal, Roles.Dust])
-    .deriveKeysAt(0);
-  if (result.type !== 'keysDerived') throw new Error('Key derivation failed');
-  hd.hdWallet.clear();
-
-  return {
-    shieldedSecretKeys: ledger.ZswapSecretKeys.fromSeed(result.keys[Roles.Zswap]),
-    dustSecretKey: ledger.DustSecretKey.fromSeed(result.keys[Roles.Dust]),
-    unshieldedKeystore: createKeystore(result.keys[Roles.NightExternal], getNetworkId()),
-  };
+/**
+ * Wallet SDK 2: one master seed gives three wallet seeds (shielded, unshielded, DUST) and the facade and every wallet start
+ * from them; no transaction method takes a secret key any more. Only the unshielded keystore is created here, for signing.
+ * SDK2-UNVERIFIED: that WalletSeeds.fromMasterSeed(seed) gives the same wallet (the same addresses) as the 1.x derivation
+ * from this seed. Compare the address cold-export-public prints with the one you already know before funding anything.
+ */
+export const deriveWalletKeys = (masterSeed: Uint8Array) => {
+  const seeds = WalletSeeds.fromMasterSeed(masterSeed);
+  const unshieldedKeystore = createKeystore({ kind: 'schnorr', secret: seeds.unshielded }, NETWORK_ID);
+  return { seeds, unshieldedKeystore };
 };
 
 export type WalletKeys = ReturnType<typeof deriveWalletKeys>;
+
+/**
+ * Derive the keys, then wipe the master seed from memory. A wallet that kept a reference to the seed buffer instead of a
+ * copy would silently change when it is wiped, so check that the address is the same afterwards and stop if it is not.
+ * SDK2-UNVERIFIED: whether WalletSeeds copies the seed. This check is what finds out.
+ */
+export const deriveAndWipe = (masterSeed: Uint8Array): WalletKeys => {
+  const keys = deriveWalletKeys(masterSeed);
+  const before = keys.unshieldedKeystore.getBech32Address().asString();
+  masterSeed.fill(0);
+  if (keys.unshieldedKeystore.getBech32Address().asString() !== before) {
+    throw new Error('Wiping the master seed changed the derived keys: the SDK keeps a reference to the buffer. Do not wipe it.');
+  }
+  return keys;
+};

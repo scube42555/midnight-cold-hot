@@ -3,23 +3,21 @@
 import { NETWORK } from './config.js';
 import { checkColdPublicNetwork } from './crosscheck.js';
 import * as Rx from 'rxjs';
-import { unshieldedToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
-import { deriveWalletKeys, readSeed } from './keys.js';
+import { NIGHT } from './txinfo.js';
+import { deriveAndWipe, readSeed } from './keys.js';
 import { buildWallet, loadWalletState, saveWalletState, submitWithRetry, walletStateFile } from './wallet.js';
 
 checkColdPublicNetwork(NETWORK);
 console.log(`Network: ${NETWORK}`);
 
-const seed = readSeed('SPONSOR');
-const keys = deriveWalletKeys(seed);
-seed.fill(0);
+const keys = deriveAndWipe(readSeed('SPONSOR'));
 const { unshieldedKeystore } = keys;
 const stateFile = walletStateFile(keys);
 
 const wallet = await buildWallet(keys, await loadWalletState(stateFile));
 let state = await wallet.waitForSyncedState();
 console.log(`Sponsor address: ${unshieldedKeystore.getBech32Address()}`);
-console.log(`NIGHT (STAR):    ${state.unshielded.balances[unshieldedToken().raw] ?? 0n}`);
+console.log(`NIGHT (STAR):    ${state.unshielded.balances[NIGHT] ?? 0n}`);
 
 const unregistered = state.unshielded.availableCoins.filter((coin) => coin.meta?.registeredForDustGeneration !== true);
 if (unregistered.length > 0) {
@@ -27,8 +25,8 @@ if (unregistered.length > 0) {
   await wallet.waitForGeneratedDust(unregistered, fee);
   const recipe = await wallet.registerNightUtxosForDustGeneration(
     unregistered,
-    unshieldedKeystore.getPublicKey(),
-    (payload) => unshieldedKeystore.signData(payload),
+    unshieldedKeystore.getPublicKey(), // SDK2-UNVERIFIED: this argument may now be a tagged key object or PublicKey.fromKeyStore(...)
+    unshieldedKeystore.signDataAsync, // signers are asynchronous (SignSegment) in SDK 2
   );
   await submitWithRetry(wallet, await wallet.finalizeRecipe(recipe));
   console.log(`Registered ${unregistered.length} NIGHT UTXO(s) for DUST generation`);

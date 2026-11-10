@@ -3,7 +3,7 @@
 import { NETWORK, hotEndpoints, walletConfig } from './config.js';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { UnshieldedAddress, UnshieldedWallet, type PublicKey } from '@midnightntwrk/wallet-sdk';
-import { unshieldedToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
+import { NIGHT } from './txinfo.js';
 
 console.log(`Network: ${NETWORK}`);
 const publicFile = process.argv[2] ?? 'cold-public.json';
@@ -12,18 +12,17 @@ const timeoutMinutes = Number(process.env.WATCH_TIMEOUT_MINUTES ?? '10');
 
 const pub = JSON.parse(readFileSync(publicFile, 'utf8')) as Record<string, unknown>;
 if (pub.network !== NETWORK) throw new Error(`${publicFile} is for network "${String(pub.network)}", expected "${NETWORK}".`);
-for (const field of ['publicKey', 'addressHex', 'address']) {
-  if (typeof pub[field] !== 'string') throw new Error(`${publicFile}: "${field}" must be a string.`);
+if (pub.sdk !== 2) {
+  throw new Error(`${publicFile} was written for wallet SDK 1.x (no "sdk": 2). Run cold-export-public again with this version.`);
 }
+if (typeof pub.address !== 'string') throw new Error(`${publicFile}: "address" must be a string.`);
+if (typeof pub.publicKey !== 'object' || pub.publicKey === null) throw new Error(`${publicFile}: "publicKey" must be an object.`);
 
-const coldPublicKey = {
-  publicKey: pub.publicKey,
-  addressHex: pub.addressHex,
-  address: pub.address,
-} as unknown as PublicKey;
+// The object the cold machine wrote, handed back as it is. SDK2-UNVERIFIED: that it survives the JSON round trip.
+const coldPublicKey = pub.publicKey as unknown as PublicKey;
 
 const config = walletConfig(hotEndpoints());
-const watcher = UnshieldedWallet(config).startWithPublicKey(coldPublicKey);
+const watcher = await UnshieldedWallet(config).startWithPublicKey(coldPublicKey); // returns a Promise in SDK 2
 await watcher.start();
 
 // A wallet can report "synced" with no coins at the very start, so wait until coins appear
@@ -50,7 +49,7 @@ renameSync(`${outFile}.tmp`, outFile);
 
 console.log(`Address:         ${watched}`);
 console.log(`Available coins: ${state.availableCoins.length}`);
-const night = unshieldedToken().raw;
+const night = NIGHT; // the token type of NIGHT is all zeros
 console.log(`NIGHT (STAR):    ${state.balances[night] ?? 0n}`);
 for (const [token, balance] of Object.entries(state.balances as Record<string, bigint>)) {
   if (token !== night) console.log(`Token ${token}: ${balance}`);

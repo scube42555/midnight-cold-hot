@@ -1,0 +1,11 @@
+# type(scope): short imperative summary, 72 characters or fewer
+#
+# Types:  feat fix docs test refactor build chore security
+# Scopes: cold hot sponsor qr scanner config keys snapshot readme deps bundle
+#
+# Body: why this change, and what could go wrong. Wrap at 72.
+#
+
+# Trailers (keep them: they say how far to trust the change)
+Verified: not run
+Touches-cold: no

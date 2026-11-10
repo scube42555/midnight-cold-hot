@@ -3,11 +3,15 @@
 Moves unshielded NIGHT out of a wallet whose seed exists only on an offline (cold) machine.
 The hot machine syncs, pays the fee with a separate sponsor wallet, and submits.
 
-**Status: written from the Midnight docs and the wallet-sdk 1.2.0 source, never run.**
-Syntax was checked, but the SDK could not be installed where these files were written, so the
-first `npm run build` is the first real type check. Treat every step as a test. Use throwaway
-wallets and faucet tokens only. A recovery phrase that has appeared on an online machine must
-never hold real funds.
+**Status (9 November 2026): not usable on Preprod until it is migrated to ledger 9.**
+Preprod moved from ledger 8 to ledger 9 on 9 November 2026, and wallet SDK 1.x can no longer transact
+there. The code is being moved to wallet SDK 2.0.0 in stages (see `MIGRATION-LEDGER9.md`): stage 1 is written but has never
+run against SDK 2, and `cold-transfer` and `sponsor-submit` are **not built yet**. `cold-public.json` changed format
+(`"sdk": 2`), so export it again. Every result marked "verified" below was verified on SDK 1.2.0 and
+ledger 8, on Preprod, **before** the upgrade, and must be repeated after the migration.
+
+Use throwaway wallets and faucet tokens only. A recovery phrase that has appeared on an online machine
+must never hold real funds.
 
 ## Files
 
@@ -50,7 +54,7 @@ the snapshot's network or address differs. Every script prints the network it is
 | Network | Node and indexer | Token | Funding |
 |---|---|---|---|
 | `undeployed` | local: node `localhost:9944`, indexer `localhost:8088/api/v4/graphql` | none | genesis wallet via `midnight-local-dev` |
-| `preview` | Midnight-hosted `rpc.preview.midnight.network` and `indexer.preview.midnight.network` | none | https://midnight-tmnight-preview.nethermind.dev/ |
+| `preview` | Midnight-hosted `rpc.preview.midnight.network` and `indexer.preview.midnight.network` | none | https://faucet.preview.midnight.network/ (Preview was relaunched as a new chain on 7 Nov 2026; old state is gone) |
 | `preprod` | Blockfrost `midnight-preprod.blockfrost.io` and `rpc.midnight-preprod.blockfrost.io` | `BLOCKFROST_PROJECT_ID`, starts with `nightpreprod` | https://midnight-tmnight-preprod.nethermind.dev/ |
 | `mainnet` | Blockfrost `midnight-mainnet.blockfrost.io` and `rpc.midnight-mainnet.blockfrost.io` | `BLOCKFROST_PROJECT_ID`, starts with `nightmainnet` | none, real NIGHT |
 
@@ -168,7 +172,8 @@ transaction from the cold address is in flight when you take it.
 
 ## 4. Test plan and results
 
-Results are what you reported from running these on **Preprod**, with throwaway wallets. "Not yet run" means
+Results are what you reported from running these on **Preprod**, with throwaway wallets, **before the ledger 9 upgrade, on
+wallet SDK 1.2.0**. They must be repeated after the migration. "Not yet run" means
 nobody has run it, not that it failed. Tests marked *new* cover checks added after the first round.
 
 | Test | What it checks | Result |
@@ -378,7 +383,7 @@ parsing it.
 
 ## 6. Verified and still unverified
 
-**Verified on Preprod** (reported by you):
+**Verified on Preprod before the ledger 9 upgrade (SDK 1.2.0, ledger 8)** (reported by you):
 
 - `cold-transfer` builds, signs and finalizes offline with the stub services, and the proof stub is never called for an
   unshielded NIGHT transfer.

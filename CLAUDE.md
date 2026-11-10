@@ -4,6 +4,21 @@ Guidance for working on this project. `README.md` is the user-facing manual and 
 before changing behaviour. This file covers how the code is organised, the rules that must not be broken, and what has
 already been learned the hard way.
 
+## Current status: ledger 9 migration pending
+
+On 9 November 2026 Preprod (like Mainnet and Preview) moved to **ledger 9**. The code is being moved from wallet SDK **1.2.0** / ledger 8
+to **2.0.0** in stages. Stage 1 (config, keys, sponsor wallet, hot-watch, sponsor-register, cold-export-public) is written but has
+**never run against SDK 2**. `cold-transfer.ts` and `sponsor-submit.ts` are still the old SDK 1.x code and are **excluded from
+`tsconfig.json`**. Read `MIGRATION-LEDGER9.md` before changing anything: it lists what changed, what is still unknown, and the
+order of work. Rules until the migration is done:
+
+- Do not run the scripts against Preprod, and do not describe anything as working on ledger 9. All "verified" results in
+  `README.md` are from SDK 1.2.0 / ledger 8.
+- Do not guess SDK 2 signatures silently. Get them from the installed package (`.d.ts`, `CHANGELOG.md`) or the owner. Where an
+  assumption is unavoidable, mark it with a `SDK2-UNVERIFIED` comment (`grep -rn SDK2-UNVERIFIED src` lists them all) and say so.
+- Resolve the cold machine's `start()` question first: SDK 2 transaction methods take no secret keys, so the offline cold machine
+  may no longer be able to avoid starting a sync. That could change the design.
+
 ## What this is
 
 Scripts for sending **unshielded** NIGHT (or another unshielded token) from a wallet whose seed lives only on an **offline
@@ -22,6 +37,7 @@ cannot be split this way. Do not add shielded support without a design that keep
 
 | Path | Role |
 |---|---|
+| `MIGRATION-LEDGER9.md` | The ledger 9 migration plan: impact by file, unknowns, order of work. |
 | `src/config.ts` | Network selection (`MIDNIGHT_NETWORK`), endpoints, wallet config. **First import must stay `./redact.js`.** |
 | `src/keys.ts` | Reads secrets from the environment, derives keys. Per-role variables: `COLD_*`, `SPONSOR_*`. |
 | `src/cold-export-public.ts` | Cold: writes `cold-public.json` (public key fields only). |
@@ -35,6 +51,7 @@ cannot be split this way. Do not add shielded support without a design that keep
 | `receiver/receiver.template.html` | Browser QR receiver. `npm run build` inlines jsQR into `dist/receiver.html`. |
 | `tools/qr_scan.py` | Python/OpenCV QR scanner for machines (Tails) whose browser cannot use the camera. |
 | `scripts/build-receiver.mjs` | Build-time only. Never needed on the cold machine. |
+| `.githooks/pre-commit`, `.gitignore`, `.gitmessage` | Keep secrets and wallet data out of commits. See `CONTRIBUTING.md`. |
 
 ## Commands
 
@@ -86,6 +103,9 @@ Configuration is by environment variable: `MIDNIGHT_NETWORK` (`undeployed|previe
 
 ## Things already learned (do not rediscover)
 
+These findings describe **wallet SDK 1.2 / ledger 8**. Re-check each one against SDK 2 during the migration; several (the
+synchronous `signRecipe` callback, secret keys passed to transaction methods, the pending-transactions service) have changed.
+
 - `signRecipe`'s callback is **synchronous** (`(data: Uint8Array) => Signature`). Signing cannot be delegated to a remote
   machine through this API, which is why the cold machine builds and signs the whole transaction itself.
 - `finalizeRecipe` always calls `provingService.prove`. An unshielded transfer with `payFees: false` needs no proofs, so the
@@ -123,6 +143,24 @@ Configuration is by environment variable: `MIDNIGHT_NETWORK` (`undeployed|previe
   fake data is "not yet run".
 - The cold bundle is built from `dist/`, production `node_modules`, `package.json` and the README (README section 5). Files
   needed only to build (`src/`, `scripts/`, `receiver/`, dev dependencies) do not go to the cold machine.
+
+## Version control
+
+The full rules are in `CONTRIBUTING.md`. For Claude Code specifically:
+
+- **Do not commit, push, tag, or rewrite history unless asked.** Never create a release or bundle tag; that is the owner's step.
+- Stage **named files**, not `git add -A` or `git add .`, and read `git status` first. Wallet data (`*.snapshot.json`, `tx.hex`,
+  `cold-public.json`, `wallet-state-*.json`, `.env`, `*.mqr`, `received-*`) must never be staged, and `.gitignore` entries for
+  them must never be loosened.
+- `.githooks/pre-commit` blocks secrets and wallet files. **Never bypass it** (`--no-verify`) and never add `allow-secret`
+  to make a commit pass. If it blocks something, stop and tell the owner what it flagged (it prints file and line, not the
+  value). `allow-secret` is only for a known public test phrase, and only with the owner's agreement.
+- Commit messages are `type(scope): summary` with two trailers that must be honest: `Verified:` (`not run`, `tsc only`,
+  `unit tests`, or `preprod T3-T5`; say `preprod` only if it was run on a real network) and `Touches-cold: yes|no`.
+- Changes to anything that runs on the cold machine need `Touches-cold: yes` and a note that the cold bundle must be rebuilt.
+  Those files are `cold-export-public`, `cold-transfer`, `keygen`, `qr-send`, `qr-decode` and what they import (`config`, `keys`,
+  `hex`, `mqr`, `qr-render`, `redact`, `snapshot`), plus `tools/qr_scan.py` and the production dependency set.
+- Dependency changes go in their own `build(deps)` commit with the lockfile, with exact pinned versions.
 
 ## Testing
 

@@ -11,16 +11,14 @@
     "keygen": "node dist/keygen.js",
     "cold:export-public": "node dist/cold-export-public.js",
     "hot:watch": "node dist/hot-watch.js",
-    "cold:transfer": "node dist/cold-transfer.js",
+    "cold:transfer": "node scripts/not-migrated.mjs cold-transfer",
     "hot:sponsor-register": "node dist/sponsor-register.js",
-    "hot:sponsor-submit": "node dist/sponsor-submit.js",
+    "hot:sponsor-submit": "node scripts/not-migrated.mjs sponsor-submit",
     "qr:send": "node dist/qr-send.js",
     "qr:decode": "node dist/qr-decode.js"
   },
   "dependencies": {
-    "@midnight-ntwrk/midnight-js-network-id": "4.1.1",
-    "@midnight-ntwrk/midnight-js-protocol": "4.1.1",
-    "@midnightntwrk/wallet-sdk": "1.2.0",
+    "@midnightntwrk/wallet-sdk": "2.0.0",
     "@scure/bip39": "2.4.0",
     "qrcode-generator": "1.4.4",
     "rxjs": "7.8.2"

@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Blocks a commit that would add wallet data or credentials. Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# It looks only at what is staged: file names that must never be committed, and added lines that look like a
+# Blockfrost token, a secret environment assignment, a recovery phrase, or a private key. It prints WHERE and WHICH
+# rule, never the value, so a secret does not end up in a terminal log as well.
+#
+# False positive? Put `allow-secret` on that line (for example a well-known public test phrase) and commit again.
+# Bypassing with --no-verify is for a reviewed exception, not a habit. This is a safety net, not a scanner you can rely on.
+set -u
+
+problems=0
+report() { printf '  BLOCKED  %s  (%s)\n' "$1" "$2" >&2; problems=$((problems + 1)); }
+
+# 1. File names that must never be committed (added, copied, modified or renamed files only).
+blocked_name='(^|/)(\.env|\.env\.[^/]*|wallet-state-[^/]*\.json|[^/]*\.snapshot\.json|tx\.hex|cold-public\.json|[^/]*\.mqr|received-[^/]*|cold-bundle[^/]*|[^/]*\.tar\.gz|[^/]*\.pem|[^/]*\.key)$'
+while IFS= read -r -d '' path; do
+  case "$path" in *.env.example | .env.example) continue ;; esac
+  if [[ $path =~ $blocked_name ]]; then report "$path" "file name is for wallet data or secrets"; fi
+done < <(git diff --cached --name-only -z --diff-filter=ACMR)
+
+# 2. Added lines only: removing a secret must not be blocked.
+tab=$'\t'
+re_token='night(preprod|mainnet|preview)[A-Za-z0-9]{8,}'
+re_projectid='project_id=[A-Za-z0-9]{8,}'
+re_env='(COLD|SPONSOR)_(MNEMONIC|SEED|PASSPHRASE)=["'"'"']?[A-Za-z0-9]{3,}'
+re_hex='(secret|private|seed)[^[:cntrl:]]{0,40}[0-9a-fA-F]{64}'
+re_phrase='^([a-z]{3,8} ){11,23}[a-z]{3,8}$'
+re_privkey='-----BEGIN [A-Z ]*PRIVATE KEY-----'
+
+while IFS="$tab" read -r file line text; do
+  [[ -z "$file" ]] && continue
+  [[ $text == *allow-secret* ]] && continue
+  where="$file:$line"
+  trimmed="${text#"${text%%[![:space:]]*}"}"
+  if   [[ $text =~ $re_token ]];     then report "$where" "looks like a Blockfrost project token"
+  elif [[ $text =~ $re_projectid ]]; then report "$where" "project_id= followed by a value"
+  elif [[ $text =~ $re_env ]];       then report "$where" "secret environment variable assigned a value"
+  elif [[ $text =~ $re_privkey ]];   then report "$where" "private key block"
+  elif [[ $text =~ $re_hex ]];       then report "$where" "64 hex characters next to the word secret, private or seed"
+  elif [[ $trimmed =~ $re_phrase ]]; then report "$where" "12 to 24 lowercase words on one line: looks like a recovery phrase"
+  fi
+done < <(
+  git diff --cached -U0 --no-color --diff-filter=ACMR | awk '
+    /^\+\+\+ b\// { file = substr($0, 7); next }
+    /^\+\+\+ /    { file = "?"; next }
+    /^@@/         { match($0, /\+[0-9]+/); line = substr($0, RSTART + 1, RLENGTH - 1) - 1; next }
+    /^\+/         { line++; printf "%s\t%d\t%s\n", file, line, substr($0, 2) }
+  '
+)
+
+if [[ $problems -gt 0 ]]; then
+  {
+    echo
+    echo "Commit stopped: $problems possible secret(s) or wallet file(s) staged."
+    echo "Unstage them (git restore --staged <file>) or, for a harmless line, add 'allow-secret' to it."
+    echo "If a real secret was staged, treat it as exposed: revoke or move it. Unstaging is not enough once it has been pushed."
+  } >&2
+  exit 1
+fi
+exit 0

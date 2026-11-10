@@ -1,6 +1,5 @@
 import './redact.js'; // first: from here on, anything printed has credentials removed
-import { getNetworkId, setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
-import { NoOpTransactionHistoryStorage } from '@midnightntwrk/wallet-sdk';
+import { NoOpTransactionHistoryStorage, createKeystore } from '@midnightntwrk/wallet-sdk';
 
 // Every script imports this module first, so the network is set before any key or address is derived.
 // Choose the network with MIDNIGHT_NETWORK: undeployed | preview | preprod | mainnet (default: preprod).
@@ -18,7 +17,14 @@ if (NETWORK === 'mainnet' && process.env.ALLOW_MAINNET !== '1') {
     'Mainnet moves real funds and these scripts are untested. Set ALLOW_MAINNET=1 only after the full test plan has passed on preprod.',
   );
 }
-setNetworkId(NETWORK);
+
+/**
+ * The network ID in the SDK's own type. Wallet SDK 2 has no global network ID (Midnight.js 5 removed setNetworkId):
+ * it is passed explicitly to the wallet config, the keystore and the address codecs.
+ * SDK2-UNVERIFIED: that the plain network name is accepted as the SDK's NetworkId.
+ */
+export type SdkNetworkId = Parameters<typeof createKeystore>[1];
+export const NETWORK_ID = NETWORK as unknown as SdkNetworkId;
 
 /**
  * Extra DUST the wallet declares on top of the ledger's price, as in the docs' Node.js guide (0.3 DUST). A DUST spend
@@ -96,7 +102,7 @@ export const coldEndpoints = (): Endpoints => ({
 });
 
 export const walletConfig = (e: Endpoints) => ({
-  networkId: getNetworkId(),
+  networkId: NETWORK_ID,
   indexerClientConnection: {
     indexerHttpUrl: e.indexerHttpUrl,
     indexerWsUrl: e.indexerWsUrl,
