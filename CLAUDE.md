@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-New session? Read `HANDOVER.md` first (current state, next steps). `README.md` is the user manual and the record of what has been tested.
+New session? `README.md` is the user manual and the record of what has been tested.
 `MIGRATION-LEDGER9.md` has the SDK 2 findings; read only the sections you need.
 
 ## What this is
