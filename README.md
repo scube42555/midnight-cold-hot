@@ -37,6 +37,7 @@ export PATH="$HOME/node22/bin:$PATH"     # the unpacked official Node 22 linux-x
 node --version
 npm install                               # creates package-lock.json: commit it and keep it pinned
 npm run build                             # compiles src/ to dist/; fix any type errors first
+npm test                                  # SDK-free unit tests (logfilter, snapshot, txinfo)
 ```
 
 If `npm run build` reports an error, send me the message. A renamed export or type is the most
@@ -139,6 +140,8 @@ The scripts delete the passphrase variable from the process environment after re
 3. **Fund the sponsor address.** Run `npm run hot:sponsor-register` once; it prints the sponsor address,
    registers its NIGHT for DUST, and waits for a DUST balance. DUST builds up over time.
 4. **Hot:** `npm run hot:watch`. Copy `cold-unshielded.snapshot.json` to the cold machine.
+   Pass `--no-probe` to disable the chain-version probe for this run (equivalent to `ASSUME_LEDGER9=0` but only for `hot-watch`).
+   `npm run probe:cold-era` is a diagnostic tool that starts an offline facade and prints which protocol version it settles on; use it to verify the probe is working without doing a real transfer.
 5. **Cold:** `node dist/cold-transfer.js <recipient address> <amount in STAR>`
    Enter the amount in STAR (the smallest unit): `1000000` or `1,000,000` for 1 NIGHT; `1500000` for 1.5 NIGHT.
    The script rejects anything else. It first checks that the snapshot is for this network and wallet and holds enough,
@@ -553,6 +556,8 @@ python3 -m pip download --only-binary=:all: --python-version "$PYVER" --implemen
 mkdir pylibs && for w in wheels/*.whl; do unzip -q "$w" -d pylibs; done
 ```
 
+`fetch-python-QR-libs.sh` in the repo root automates the above for the current offline machine's platform. The steps inside are specific to that platform; treat it as a reference rather than a universal script if your offline machine differs.
+
 Each backslash must be the last character on its line (no trailing space). If you type the command on one line,
 leave the backslashes out. The `<5` keeps OpenCV on the 4.x series this was tested with; OpenCV 5 is untested.
 If `python3 --version` on the offline machine reports 3.9, that is probably an old, unsupported Tails release: update Tails first.
@@ -601,15 +606,19 @@ and noise, and the older detector, which the script uses only when Aruco is miss
 loop against a simulated webcam, with the output decoded by `qr-decode` to the identical file. **Verified by you:** it works
 with a real camera on a TailsOS cold machine (a 2011 CPU), with wheels downloaded for that machine's Python version.
 
-## 8. Audible alerts and progress (`sponsor-submit`)
+## 8. Audible alerts and progress (`sponsor-register`, `sponsor-submit`)
 
-`sponsor-submit` can take several minutes, so it makes a sound when it needs you:
+Both scripts make sounds during long operations so you can step away and return when needed.
 
+**`sponsor-register`**
+- **First sync done:** three beeps once `waitForSyncedState` completes on a first-time run (whether or not the protocol check that follows succeeds). Subsequent runs that resume from a saved state do not beep here.
+
+**`sponsor-submit`**
+- **First sync done:** three beeps immediately after the wallet state is saved on a first-time run, before any further checks. Lets you know the long sync finished even if the script then exits early (e.g. expired `tx.hex`).
 - **Prompt ready:** one beep when the `SUBMIT` prompt appears, then another every 20 seconds until you answer.
 - **Finished:** two beeps when the submission (or dry run) completes.
 
-It also prints progress while it works: whether the sponsor wallet is resuming from a saved state file
-or syncing from scratch, a "Still syncing..." line every 30 seconds, and "Synced in N s" when done.
+Both scripts print progress while syncing: whether the wallet is resuming from a saved state or syncing from scratch, a "Still syncing..." line every 30 seconds, and "Synced in N s" when done.
 
 | Setting | Effect |
 |---|---|
