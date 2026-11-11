@@ -18,11 +18,11 @@ must never hold real funds.
 | Script | Runs on | Needs a seed? | What it does |
 |---|---|---|---|
 | `keygen` | dev machine | no | Prints a new 24-word phrase (throwaway wallets only) |
-| `cold-export-public` | cold | `COLD_MNEMONIC` or `COLD_SEED` | Writes `cold-public.json` (public fields only) |
+| `cold-export-public` | cold | `COLD_MNEMONIC` or `COLD_SEED`; `COLD_PASSPHRASE` (optional) | Writes `cold-public.json` (public fields only) |
 | `hot-watch` | hot | no | Watches the cold address by public key, writes `cold-unshielded.snapshot.json` |
-| `sponsor-register` | hot | `SPONSOR_MNEMONIC` or `SPONSOR_SEED` | One-time: registers the sponsor's NIGHT for DUST |
-| `cold-transfer` | cold | `COLD_*` | Builds, signs, finalizes the transfer, writes `tx.hex` |
-| `sponsor-submit` | hot | `SPONSOR_*` | Adds DUST for the fee and submits `tx.hex` |
+| `sponsor-register` | hot | `SPONSOR_MNEMONIC` or `SPONSOR_SEED`; `SPONSOR_PASSPHRASE` (optional) | One-time: registers the sponsor's NIGHT for DUST |
+| `cold-transfer` | cold | `COLD_MNEMONIC` or `COLD_SEED`; `COLD_PASSPHRASE` (optional) | Builds, signs, finalizes the transfer, writes `tx.hex` |
+| `sponsor-submit` | hot | `SPONSOR_MNEMONIC` or `SPONSOR_SEED`; `SPONSOR_PASSPHRASE` (optional) | Adds DUST for the fee and submits `tx.hex` |
 
 The cold and sponsor wallets use different variable names on purpose, so they cannot be mixed up.
 The scripts delete the variable from the process environment once they have read it. A BIP-39 passphrase goes in `COLD_PASSPHRASE` or `SPONSOR_PASSPHRASE` (section 3).
