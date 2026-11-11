@@ -1,9 +1,8 @@
 # Migrating to ledger 9 (wallet SDK 2.0.0)
 
-**Status: this project is not usable on Preprod until it is migrated.** It targets wallet SDK 1.2.0 and builds ledger 8
-transactions. Preprod runs ledger 9 since 9 November 2026 (block 3,348,434), and the docs say a wallet on SDK 1.x cannot
-transact after the upgrade. Everything marked "verified" in `README.md` was verified on SDK 1.2.0 and ledger 8, **before**
-the upgrade. Nothing here has been tried against SDK 2.
+**Status (10 November 2026):** the code targets wallet SDK 2.0.0. Measured on Preprod: address derivation, `hot-watch`, and an offline facade
+settling on ledger 9 (details below). **`cold-transfer` and `sponsor-submit` are written but have never been built or run**, and every result
+marked "verified" in `README.md` section 4 for tests T1 to T23 was verified on SDK 1.2.0 and ledger 8, before the upgrade.
 
 Sources, all read on 9 November 2026:
 [Ledger 9 upgrade](https://docs.midnight.network/relnotes/ledger-9),
@@ -113,14 +112,225 @@ token-prefix check, the mainnet guard), the passphrase and seed handling in `key
 copies the seed and one that keeps a view of it. **Not tested:** anything that calls the real SDK 2. The first
 `npm install && npm run build` is the first real type check.
 
+### First real build (wallet SDK 2.0.0 installed)
+
+`npm run build` reported **one** error, in `hot-watch.ts`: the standalone `UnshieldedWallet` requires a `forks` schedule that the
+facade fills in for itself. Fixed by passing `DefaultForkSchedule` (marked `SDK2-UNVERIFIED`). Everything else type-checked against
+the real SDK 2: `config`, `keys`, `wallet` (facade `init`, `start(seeds)`, `startWithSeed`), `cold-export-public` and `sponsor-register`
+(including the async signer). Type-checking does not prove it works at run time; the runs below do.
+
+If `DefaultForkSchedule` is not exported or is not a plain value, find it with:
+
+```bash
+grep -rn "DefaultForkSchedule" node_modules/@midnightntwrk/wallet-sdk-facade/dist --include=*.d.ts | head
+grep -rn "ForkSchedule" node_modules/@midnightntwrk/wallet-sdk-abstractions/dist --include=*.d.ts | head
+```
+
+### Results so far (reported)
+
+- **Address check: passed.** Same phrase, same address on SDK 2 as on SDK 1.2. `deriveAndWipe` did not trip, so the SDK copies the seed.
+- **`hot-watch`: passed.** It ran to completion, which it only does after a full sync and an address match. So the public key survives
+  the JSON round trip (it is still three strings: `publicKey`, `addressHex`, `address`), and the standalone unshielded wallet synced
+  against Preprod's ledger 9 chain through Blockfrost.
+- **The snapshot format is almost unchanged.** SDK 2 adds two top-level members, `"version": "v1"` and `"writtenBy": "v1"`. The rest
+  (`publicKey`, `state.availableUtxos` with `utxo` and `meta`, `pendingUtxos`, `protocolVersion`, `appliedId`, `networkId`) is the same
+  as 1.x. `snapshot.ts` accepts it unchanged; it now also records the envelope and the protocol version, and `hot-watch` prints them.
+  No secrets are in it (the public key still hashes to the address).
+
+### What the first facts file (the type definitions) showed
+
+- **The unshielded wallet's changelog is not needed.** The npm package ships no `CHANGELOG.md`, and the real snapshot already shows the format.
+- **`facade.adoptTransaction(bytes, stage)` exists** (stages `'Unproven'`, `'Unbound'`, `'Finalized'`). Its own example is
+  `adoptTransaction(Buffer.from(txHex, 'hex'), 'Unbound')`, so hex bytes remain the way a transaction travels. Only the current protocol
+  epoch is accepted: a transaction built on the other side of a fork boundary throws `WalletTransactionUnwrapError`.
+- **`start()` cannot skip the sync.** `FacadeStartOptions` has one member, `manualSync`, which is for the DUST wallet and refused while
+  it is below `forks.v9`. So the cold machine will start background sync with no network. Whether `transferTransaction` then still works
+  can only be shown by a run with the network off.
+- **The default lifecycle service polls the indexer** (`start()` begins polling), so the cold machine has to stub it. `InitParams` takes
+  `provingService` (a `VersionedProvingService`), `submissionService`, `transactionLifecycleService`, `fetchBlockData` and
+  `validationService`; the last two default to indexer-backed versions and will also need to be stubbed or left unreachable on cold.
+- **`DefaultForkSchedule`** is documented as built from `V9NativeForkSchedule`, "the schedule of a chain born on ledger-v9". Whether that
+  matches a chain upgraded in place (Preprod) is what the protocol-version question below turns on.
+- **Method signatures:** `submitTransaction(tx: FinalizedTx)`, `balanceFinalizedTransaction(tx: FinalizedTx, options)`,
+  `finalizeRecipe(recipe): Promise<FinalizedTx>`, `signRecipe(recipe, signSegment: SignSegment)`, `transferTransaction(outputs, options)`,
+  `revert(txOrRecipe, reason?)`. The facade also documents a table of which calls may wait during a protocol crossing.
+
+Still missing, and why: the `WalletTransaction` class body (is it itself serializable? how is the inner ledger transaction read for
+`txinfo`?), the crossing table, the whole lifecycle interface, the fork schedule comments, and `restore()` on the unshielded wallet.
+Second batch (writes `~/sdk2-facts2.txt`):
+
+```bash
+cd ~/cardano/midnight/dev/midnight-cold-hot/node_modules/@midnightntwrk && {
+F=wallet-sdk-facade/dist/index.d.ts
+echo "== 1. WalletTransaction class: serialize, unwrap, wire =="; sed -n 95,230p wallet-sdk-abstractions/dist/WalletTransaction.d.ts
+echo; echo "== 2. facade: protocol state (Settled / Crossing) =="; sed -n 236,275p $F
+echo; echo "== 3. facade: DefaultForkSchedule and configuration =="; sed -n 470,520p $F
+echo; echo "== 4. facade: adoptTransaction and the method table (which calls wait) =="; sed -n 655,760p $F
+echo; echo "== 5. facade: submit, balance and transfer options, finalize, sign =="; sed -n 790,830p $F; sed -n 855,935p $F
+echo; echo "== 6. facade: revert and start =="; sed -n 995,1045p $F
+echo; echo "== 7. lifecycle service, whole interface =="; sed -n 241,340p wallet-sdk-capabilities/dist/transactionLifecycle/lifecycleService.d.ts
+echo; echo "== 8. protocol versions and fork schedules =="; sed -n 40,95p wallet-sdk-abstractions/dist/ProtocolVersion.d.ts
+echo; echo "== 9. unshielded wallet: configuration, chain version probe, restore =="; sed -n 40,100p wallet-sdk-unshielded-wallet/dist/UnshieldedWallet.d.ts; sed -n 185,200p wallet-sdk-unshielded-wallet/dist/UnshieldedWallet.d.ts; sed -n 120,155p wallet-sdk-unshielded-wallet/dist/UnshieldedWalletAPI.d.ts
+grep -n "restore\|startWithPublicKey\|serializeState" wallet-sdk-unshielded-wallet/dist/*.d.ts | head -12
+echo; echo "== 10. recipe, proving and submission types =="
+grep -rnE -A14 "(type|interface) (BalancingRecipe|VersionedProvingService|SubmissionService)( |<|=)" wallet-sdk-*/dist --include=*.d.ts | head -100
+} > ~/sdk2-facts2.txt 2>&1; wc -l ~/sdk2-facts2.txt
+```
+
+### What the second facts file showed
+
+**Transactions.**
+- `WalletTransaction` is a sealed handle with a `protocolVersion` and a `stage` (`'Unproven'`, `'Unbound'`, `'Finalized'`). It has
+  `serialize()` returning bytes, so `tx.hex` can stay as it is: `toHex(finalized.serialize())` on the cold side.
+- The inner ledger transaction is **deliberately unreachable** (a `#private` field). The only supported read is
+  `WalletTransaction.unwrapWithin(handle, range)`. For the plan display, `sponsor-submit` should instead decode the same bytes with
+  `@midnightntwrk/wallet-sdk/ledger/v9` and read `intents` as before.
+- `facade.adoptTransaction(bytes, stage)` stamps the handle with **the facade's own current version** and refuses bytes written by the other
+  ledger version (`WireFormatError`). So a ledger 8 transaction from the cold machine would be refused by a ledger 9 sponsor, safely.
+- `WalletTransaction.toWire(handle)` writes a JSON-safe envelope carrying the version and stage: an option if a richer file than raw hex is wanted.
+
+**Facade methods** (all take `ttl` options and no secret keys): `transferTransaction(outputs, { ttl, payFees? })` returns an
+`UnprovenTransactionRecipe`; `signRecipe(recipe, signSegment)`; `finalizeRecipe(recipe): FinalizedTx`; `balanceFinalizedTransaction(tx: FinalizedTx,
+{ ttl, tokenKindsToBalance? })` (paying with DUST may wait up to two minutes for the DUST trees, then rejects with `Wallet.Sync`);
+`submitTransaction(tx: FinalizedTx)`; `revert(txOrRecipe, reason?)`; `calculateTransactionFee(tx)` and `estimateTransactionFee(tx, { ttl?, currentTime? })`
+(both return a `bigint`; the second includes the balancing fee). `validateTransaction(tx, { flags, blockData })` is recommended before balancing and
+before submitting, with the flags tabled in the docs (for `submitTransaction`: balancing, signatures and limits all `true`).
+
+**Services `InitParams` takes:** `provingService` (`{ prove(transaction, protocolVersion) }`), `submissionService` (`{ submitTransaction, close }`),
+`transactionLifecycleService` (`start`, `stop`, `state`, `balanced`, `finalized`, `submitted`, `reverted`, `orphanBeyond`, `included`, `serializeState`),
+and `fetchBlockData` and `validationService`, which default to indexer-backed versions.
+
+**The ledger-era question (the important one).** The unshielded wallet registers a **V1 variant (ledger 8)** below `forks.v9` and a **V2 variant
+(ledger 9)** from it; a 2.x node reports protocol version `2000000`, a 1.x node a lower value. The docs say:
+- A wallet with no chain-version probe **starts on V1** and "learns the version from the first message it sees". "On a chain that has shown this wallet no messages
+  at all, an epoch that never gets corrected."
+- `restore` goes "into whichever registered variant wrote it". Your snapshot says `"writtenBy": "v1"` and `"protocolVersion": "1000300"`.
+- During a crossing the facade "stays bound to the version the laggards are still on".
+
+My reading: your address has seen no event since the upgrade, so its wallet is still on V1, and **an offline cold machine restoring this snapshot would
+build ledger 8 transactions**, which Preprod refuses (and the ledger 9 sponsor's `adoptTransaction` would refuse first). The fresh shielded and DUST wallets
+start on V1 too. This is a reading of the doc comments, not a measurement.
+
+The docs name two ways to tell a wallet where the chain is:
+1. **`chainVersionProbe`** (optional; "an application that would rather ask something else, a cache or a value it already holds, supplies its own"). With one,
+   a wallet starts "at the variant that owns the version the chain reports, which on a chain already past the boundary is the ledger-v9 one from the first moment".
+2. **`forks`**: "a chain whose boundary is at or below the minimum supported version has never had two epochs", which says the chain was born on ledger 9.
+
+What is not known: whether either works when the wallet is **restored from a V1 snapshot** with no network, and for the fresh shielded and DUST wallets.
+`probe-cold-era` tests exactly that (next section) without needing any type I have not seen.
+
+### Probe results (reported): the cold facade is on ledger 8, and the `forks` shortcut is refused
+
+`probe-cold-era`, run on your snapshot with every endpoint unreachable:
+
+| Run | Result |
+|---|---|
+| Default settings | The facade **started offline**. The `Wallet.Sync: [object ErrorEvent]` lines are the unreachable indexer, logged and non-fatal. `state()` emitted, and it reports `activeProtocolVersion: 0`, phase `Settled`. That is the ledger 8 epoch (below 2000000): **the cold machine would build ledger 8 transactions** |
+| `forks.v9` = minimum supported version | **Refused at build:** `ProtocolMismatch: sinceVersion is prior to previously registered version`. The SDK registers a ledger 8 variant at the minimum and a ledger 9 variant at `forks.v9`, and the second must come later. The doc comment about a boundary "at or below the minimum" does not hold at run time |
+
+Two things are good news: an offline facade is viable (it starts, and its state is readable), and the failure mode is the one the docs predicted.
+
+### Experiment results (reported): the chain-version probe works
+
+| Run | Result |
+|---|---|
+| `hot-watch --assume-ledger9` | `Snapshot format: v2, written by v2`, `Protocol version: 2000000`. So `startWithPublicKey` honours the probe, the guessed shape of `chainVersionProbe` compiled and worked, and the token appears as `<redacted>` in the node's own log line |
+| `probe-cold-era` on that snapshot, probe on | The offline facade started, and settled: `activeProtocolVersion: 2000000`, phase `Settled`. The `Wallet.Sync` errors now come from the `v2/` folder (the ledger 9 variant). The fresh shielded and DUST wallets honoured the probe too |
+
+So the cold design survives with one added requirement: **the snapshot must be written by `hot-watch` with the probe**, and the cold facade needs the probe in
+its own configuration. Both are now the default (`ASSUME_LEDGER9=0` or `--no-probe` turns it off, for a chain still on ledger 8), and `cold-transfer`
+refuses a snapshot below protocol version 2000000.
+
+### Stage 2: written, never built or run
+
+| File | What it does now |
+|---|---|
+| `cold-transfer.ts` | Refuses a snapshot below 2000000. Builds the facade offline (stub prover and submission; default lifecycle service, which the probe showed works offline), waits for `Settled` on ledger 9 **before any prompt**, then `transferTransaction(outputs, { ttl, payFees: false })`, `signRecipe(recipe, signDataAsync)`, `finalizeRecipe`, and writes `finalized.serialize()` as hex |
+| `sponsor-submit.ts` | Decodes `tx.hex` with the ledger 9 package for the plan display; builds the sponsor facade; `adoptTransaction(bytes, 'Finalized')` (refuses a ledger 8 transaction); `validateTransaction` before balancing (catches a tampered file); shows an **estimate** of the DUST fee from `estimateTransactionFee` before the prompt; after `SUBMIT` balances, signs, finalizes, validates again, shows the **declared** fee read from the final bytes, and submits |
+| `sponsor-register.ts` | Saves the synced wallet state **right after the sync**, before registering, so a failure at registration no longer costs the sync |
+| `config.ts`, `hot-watch.ts` | Probe on by default |
+
+Changed on purpose: the fee is no longer worked out by balancing before the prompt. SDK 2's `estimateTransactionFee` gives an estimate without locking DUST, so
+cancelling no longer needs `revert`. Whether that estimate includes the 0.3 DUST overhead is unknown; the declared fee shown after signing is the authority.
+
+**First run of `cold-transfer` (reported, network off):** it started, printed `Wallets settled at protocol version 2000000 (ledger 9)`, showed the review
+screen with the right balance, and after `SEND` got through building and signing. It failed at the proving step with `expected proving provider property 'lookupKey'
+to be a function`: ledger 9's proving provider has three methods (`prove`, `check`, `lookupKey`), and the stub had two. Fixed; whether the transfer then needs
+no proof at all (so none of the three is ever called) is what the next run shows.
+
+**`cold-transfer` fully confirmed (reported):** `Wrote tx.hex (protocol version 2000000). The proof stub was not called.` Total 4 s, offline. The cold machine needs no proof for an
+unshielded transfer, and the SDK 2 build, async signing and finalize all work offline once the snapshot is a ledger 9 one.
+
+**First run of `sponsor-submit` (reported):** it decoded `tx.hex` as a ledger 9 transaction and showed the plan correctly (two small coins, 99.999999 and 0.000001 NIGHT,
+spent for a 10 NIGHT payment with 90 NIGHT change). Two problems appeared:
+1. **A bug in my defaults.** With the probe on for every wallet, the sponsor's fresh shielded wallet ran on the ledger 9 decoder from the start and failed on the
+   ledger 8 history: `Wallet.Other: Error while applying sync update ... Could not deserialize ledger event`, repeated. (My explanation from the error text; not
+   separately confirmed.) The probe suits wallets with nothing to sync (the cold machine) and the unshielded wallet (plain JSON events). The sponsor now gives the probe to its
+   unshielded wallet only, lets shielded and DUST start on ledger 8 and cross by themselves, and checks the phase after the sync (`Settled` at 2000000 or later) before doing anything.
+   If an idle sponsor never crosses on its own, that check says so, and a different approach is needed.
+2. **`npm run ... --dry-run` swallows the flag.** npm took `--dry-run` for itself, so the script would have submitted for real. The script now stops if npm reports that.
+
+`SDK2-UNVERIFIED` lines to expect compile or run errors on: `ledgerV9.CostModel.initialCostModel()` and `prove(provider, costModel)` on a v9 transaction (cold prover stub);
+`ledgerV9.Transaction.deserialize(...)` and its generics, `UnshieldedAddress.codec.encode(NETWORK_ID, ...)` and `DustAddress.encodePublicKey(...)` (display); the options
+of `validateTransaction`; the `blockData` field of the recipe.
+
+### Run order for stage 2 (throwaway wallets, small amounts)
+
+1. `npm run build`. Send the compiler errors: they point at the wrong guesses above.
+2. `node dist/hot-watch.js` (probe on by default). Check `written by v2` and a protocol version of 2000000. This replaces your old snapshot.
+3. `sponsor-register`, if the sponsor still has no DUST. **A run started before this build has no probe**: if that process is still syncing, it may build its
+   registration at ledger 8 and fail at the end, losing the sync. If it has only just started, stopping it and restarting with this build is the safer choice;
+   the new build saves its state right after the sync.
+4. `node dist/cold-transfer.js <address> 1000000`, **with the network off**. The prompt should appear only after it prints `Wallets settled at protocol version 2000000`.
+5. Carry `tx.hex` to the hot machine (QR or USB), then `node dist/sponsor-submit.js tx.hex --dry-run`, then without `--dry-run`. With npm the flag needs a lone `--`
+   in front of it, or use `node` directly.
+
+**The sponsor's first sync from scratch is the slow part**, and `sponsor-submit` also syncs from scratch whenever there is no `wallet-state-*.json`. Let `sponsor-register`
+do the long sync once: the new build saves the state right after it, and later runs resume from it.
+
+Third batch of type definitions, only if the stage 2 build errors need them (writes `~/sdk2-facts3.txt`):
+
+```bash
+cd ~/cardano/midnight/dev/midnight-cold-hot/node_modules/@midnightntwrk && {
+echo "== 11. chain version probe types =="; ls wallet-sdk-capabilities/dist/chainVersion/ 2>&1; cat wallet-sdk-capabilities/dist/chainVersion/*.d.ts 2>&1 | head -150
+echo; echo "== 12. FacadeState =="; grep -n -A45 "export type FacadeState" wallet-sdk-facade/dist/index.d.ts | head -80
+echo; echo "== 13. ProtocolVersion constructors and ranges =="; sed -n 1,40p wallet-sdk-abstractions/dist/ProtocolVersion.d.ts; sed -n 95,170p wallet-sdk-abstractions/dist/ProtocolVersion.d.ts
+echo; echo "== 14. unshielded restore variants =="; sed -n 100,125p wallet-sdk-unshielded-wallet/dist/UnshieldedWallet.d.ts
+echo; echo "== 15. shielded and dust: start, restore, probe =="; grep -n "startWithSeed\|startWithKeys\|restore(" wallet-sdk-shielded/dist/*.d.ts wallet-sdk-dust-wallet/dist/*.d.ts | head -20; grep -rn "chainVersionProbe" wallet-sdk-shielded/dist wallet-sdk-dust-wallet/dist --include=*.d.ts | head -6
+echo; echo "== 16. lifecycle implementation, cost model, ledger v9 =="; grep -rn "TransactionLifecycleServiceImpl" wallet-sdk-capabilities/dist --include=*.d.ts | head -6; ls wallet-sdk-capabilities/dist; grep -rn "initialCostModel" ledger-v9 --include=*.d.ts | head -3; grep -rn "static deserialize" ledger-v9 --include=*.d.ts | head -3
+echo; echo "== 17. unshielded wallet API (build, sign, balance without the facade) =="; sed -n 155,260p wallet-sdk-unshielded-wallet/dist/UnshieldedWalletAPI.d.ts; grep -n "transferTransaction\|signUnprovenTransaction\|signUnboundTransaction\|balanceFinalizedTransaction\|revertTransaction" wallet-sdk-unshielded-wallet/dist/UnshieldedWalletAPI.d.ts | head
+} > ~/sdk2-facts3.txt 2>&1; wc -l ~/sdk2-facts3.txt
+```
+
+### Open question raised by the snapshot: `protocolVersion`
+
+**Resolved (see the probe results above): reading 2 was right.** The wallet was on the ledger 8 variant; the probe fixes it. The text below is kept as the record of the question.
+
+The snapshot says `"protocolVersion": "1000300"` (SDK 1.2 wrote `"0"`). The ledger 9 page treats `>= 2000000` as the sign that the
+network crossed to ledger 9, and a wallet decides which ledger to use from its protocol version and the `forks` schedule
+(`forks.v9`, default 2000000). Two readings, and I cannot tell them apart without the SDK's type definitions or a run:
+
+1. It is the wallet's record of the **last event this address saw**. Your newest coin is from 7 November, before the upgrade, so an
+   idle address would keep an older number. Harmless on the hot side.
+2. The wallet is **not on ledger 9** yet. Then a cold machine restoring this snapshot offline would build **ledger 8** transactions,
+   which Preprod rejects. This is the offline-crossing risk described below, now with a concrete symptom to look for.
+
+How the SDK picks the ledger when it cannot reach a node is exactly what `chainVersionProbe` (an optional member of the unshielded
+wallet's configuration) and `forks` are about. To read them:
+
+```bash
+cd ~/sdk2-probe/node_modules/@midnightntwrk
+grep -rn "chainVersionProbe\|ChainVersionProbe\|ForkSchedule\|Crossing\|Settled\|activeProtocolVersion" wallet-sdk-unshielded-wallet/dist wallet-sdk-facade/dist wallet-sdk-abstractions/dist --include=*.d.ts | head -40
+```
+
 ### Run these first, in this order
 
 1. `npm install` and `npm run build`. Send me the compiler errors; they will point at the wrong guesses.
-2. **The address check (most important).** With a throwaway phrase you already used on SDK 1.2 (for example the cold wallet
-   whose address you know), run `npm run cold:export-public` and compare the address with the old one. If they differ,
-   `WalletSeeds.fromMasterSeed` derives a different wallet from the same seed, and funds would be at the old address: stop
-   and tell me.
-3. `hot-watch` against Preprod with that `cold-public.json`: does `startWithPublicKey` accept the object after the JSON round trip?
+2. **The address check (most important). PASSED (reported):** the address from `cold-export-public` on SDK 2 matches the one from
+   SDK 1.2 for the same phrase, so `WalletSeeds.fromMasterSeed` derives the same wallet and existing funds stay put. The run also
+   passed `deriveAndWipe`, so the SDK copies the seed instead of keeping a reference to it. Still untested here: the public key
+   object surviving the JSON round trip (step 3).
+3. `hot-watch` against Preprod with that `cold-public.json`: does `startWithPublicKey` accept the object after the JSON round trip? **PASSED (reported).**
 4. `sponsor-register` for the sponsor (re-registration is required after the upgrade). Needs the proof server on 9.0.0.
 
 ## Stage 2: what is blocking `cold-transfer` and `sponsor-submit`
@@ -135,17 +345,28 @@ I need the facade's `InitParams` and the transaction handle types before writing
 - **The cold machine's `start()` question** (below). It cannot be answered by reading; it needs a run with the network off.
 - **The unshielded snapshot format.** `snapshot.ts` validates a strict shape. A real SDK 2 snapshot shows whether it still fits.
 
-Commands for the second batch (same scratch folder as below):
+Commands for the second batch. Run them from anywhere: they `cd` into the project's `node_modules`, and write everything to
+`~/sdk2-facts.txt` (public type definitions only, nothing secret). Send that file's contents.
 
 ```bash
-cd ~/sdk2-probe/node_modules/@midnightntwrk
-grep -rn "InitParams" wallet-sdk-facade/dist --include=*.d.ts | head
-grep -rn "provingService\|submissionService\|provers\|transactionLifecycleService" wallet-sdk-facade/dist --include=*.d.ts | head -30
-grep -rn "TransactionLifecycleService" wallet-sdk-facade/dist wallet-sdk-capabilities/dist --include=*.d.ts | head -20
-grep -rn "adoptTransaction\|WalletTransaction\|activeProtocolVersion" wallet-sdk-facade/dist wallet-sdk-abstractions/dist --include=*.d.ts | head -40
-grep -n "finalizeRecipe\|transferTransaction\|balanceFinalizedTransaction\|signRecipe\|submitTransaction\|revert" wallet-sdk-facade/dist/index.d.ts | head -30
-grep -rn "FacadeStartOptions\|FacadeStartMaterial\|StartMaterial" wallet-sdk-facade/dist --include=*.d.ts | head
+cd ~/cardano/midnight/dev/midnight-cold-hot/node_modules/@midnightntwrk && {
+echo "== 0. packages =="; ls
+echo; echo "== 0b. facade files =="; ls wallet-sdk-facade/dist | head -40
+echo; echo "== A. facade init parameters (proving, submission, lifecycle services) =="
+grep -rnE -A30 "(interface|type) InitParams" wallet-sdk-facade/dist --include=*.d.ts | head -70
+echo; echo "== B. lifecycle service interface =="
+grep -rnE -A25 "(interface|type) TransactionLifecycleService( |<|=)" wallet-sdk-*/dist --include=*.d.ts | head -70
+echo; echo "== C. transaction handles: bytes in and out =="
+grep -rnE "adoptTransaction|WalletTransaction" wallet-sdk-facade/dist wallet-sdk-abstractions/dist wallet-sdk-capabilities/dist --include=*.d.ts | head -40
+echo; echo "== D. what the facade methods take and return =="
+grep -rnE "finalizeRecipe|transferTransaction|balanceFinalizedTransaction|signRecipe|submitTransaction|revert\(" wallet-sdk-facade/dist --include=*.d.ts | head -30
+echo; echo "== E. start options =="
+grep -rnE -B2 -A12 "FacadeStartOptions|FacadeStartMaterial" wallet-sdk-facade/dist --include=*.d.ts | head -60
+echo; echo "== F. chain version, forks, crossing (the protocolVersion question) =="
+grep -rnE "chainVersionProbe|ChainVersionProbe|ForkSchedule|activeProtocolVersion|Crossing|Settled" wallet-sdk-unshielded-wallet/dist wallet-sdk-facade/dist wallet-sdk-abstractions/dist --include=*.d.ts | head -40
+echo; echo "== G. unshielded wallet changelog =="
 sed -n 1,120p wallet-sdk-unshielded-wallet/CHANGELOG.md
+} > ~/sdk2-facts.txt 2>&1; wc -l ~/sdk2-facts.txt
 ```
 
 If a path does not exist, `ls` the package and adjust. A snapshot from a real SDK 2 `hot-watch` run (stage 1, step 3) answers the

@@ -9,7 +9,8 @@ import {
   UnshieldedWallet,
   PublicKey,
 } from '@midnightntwrk/wallet-sdk';
-import { hotEndpoints, walletConfig } from './config.js';
+import { assumeLedger9, hotEndpoints, walletConfig } from './config.js';
+import { LEDGER9_PROTOCOL_VERSION } from './snapshot.js';
 import { type WalletKeys } from './keys.js';
 
 export type SavedWalletState = { shielded: string; unshielded: string; dust: string };
@@ -33,21 +34,34 @@ export const saveWalletState = async (wallet: WalletFacade, file: string): Promi
   await rename(`${file}.tmp`, file);
 };
 
+/** The facade's protocol phase as text (it holds bigints, which JSON cannot print). */
+export const describePhase = (protocol: unknown): string =>
+  JSON.stringify(protocol, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
+
+/** True once the wallets agree and are acting at ledger 9 or later. */
+export const onLedger9 = (protocol: { _tag: string; version?: bigint }): boolean =>
+  protocol._tag === 'Settled' && (protocol.version ?? 0n) >= LEDGER9_PROTOCOL_VERSION;
+
 /**
  * Start the sponsor wallet from its seeds, resuming from a snapshot when one is passed.
- * SDK2-UNVERIFIED: that restore() accepts a snapshot written by this SDK version (delete wallet-state-*.json from SDK 1.x).
+ *
+ * No chain-version probe for the shielded and DUST wallets. The sponsor syncs from the start of the chain, and a wallet told "the chain is on
+ * ledger 9" begins on the ledger 9 decoder and cannot read the ledger 8 history ("Could not deserialize ledger event", repeated). They start on
+ * ledger 8, read the history, and cross at the upgrade on their own. The unshielded wallet's events are plain JSON, so it can take the probe.
+ * Verified (11 Nov 2026): shielded and DUST wallets crossed to ledger 9 on their own (Protocol phase: Settled 2000000).
+ * Verified (11 Nov 2026): restore() accepts a snapshot written by this SDK version.
  * The lifecycle store (transactionLifecycleService.serializeState) is not saved: a fresh one per run is enough here.
  */
 export const buildWallet = async (keys: WalletKeys, saved?: SavedWalletState): Promise<WalletFacade> => {
   const { seeds, unshieldedKeystore } = keys;
 
   const wallet = await WalletFacade.init({
-    configuration: walletConfig(hotEndpoints()),
+    configuration: walletConfig(hotEndpoints(), { assumeLedger9: false }),
     shielded: (cfg) => (saved ? ShieldedWallet(cfg).restore(saved.shielded) : ShieldedWallet(cfg).startWithSeed(seeds.shielded)),
     unshielded: (cfg) =>
       saved
         ? UnshieldedWallet(cfg).restore(saved.unshielded)
-        : UnshieldedWallet(cfg).startWithPublicKey(PublicKey.fromKeyStore(unshieldedKeystore)),
+        : UnshieldedWallet({ ...cfg, chainVersionProbe: assumeLedger9 }).startWithPublicKey(PublicKey.fromKeyStore(unshieldedKeystore)),
     dust: (cfg) => (saved ? DustWallet(cfg).restore(saved.dust) : DustWallet(cfg).startWithSeed(seeds.dust)),
   });
   await wallet.start(seeds); // 4.x: wallet.start(shieldedSecretKeys, dustSecretKey)

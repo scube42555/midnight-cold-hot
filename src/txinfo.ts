@@ -5,14 +5,18 @@
 import { localStamp } from './timefmt.js';
 
 export type Helpers = {
-  /** A spender's public key (SignatureVerifyingKey) to its address as hex. */
-  addressOfKey: (key: string) => string;
+  /**
+   * A spender's public key to its address as hex. The key is the ledger's own SignatureVerifyingKey, which in ledger 9 is not a plain
+   * string, so it is passed through exactly as the decoded transaction provides it.
+   */
+  addressOfKey: (key: unknown) => string;
   /** An address as hex to its text form for the current network. */
   bech32: (addressHex: string) => string;
 };
 
-type Coin = { owner: string; type: string; value: bigint; intentHash?: string; outputNo?: number };
-type Offer = { inputs: readonly Coin[]; outputs: readonly Coin[] };
+type InputCoin = { owner: unknown; type: string; value: bigint; intentHash?: string; outputNo?: number };
+type OutputCoin = { owner: string; type: string; value: bigint };
+type Offer = { inputs: readonly InputCoin[]; outputs: readonly OutputCoin[] };
 type IntentLike = {
   guaranteedUnshieldedOffer?: Offer;
   fallibleUnshieldedOffer?: Offer;
@@ -70,10 +74,10 @@ export const readTransaction = (tx: TxLike, h: Helpers): TxDetails => {
   return { inputs, outputs, contractActions, expires };
 };
 
-const night = (v: bigint): string => `${v / 1_000_000n}.${(v % 1_000_000n).toString().padStart(6, '0')}`;
+export const formatNight = (v: bigint): string => `${v / 1_000_000n}.${(v % 1_000_000n).toString().padStart(6, '0')}`;
 
 export const amountText = (type: string, value: bigint): string =>
-  type === NIGHT ? `${value} STAR (${night(value)} NIGHT)` : `${value} of token ${type}`;
+  type === NIGHT ? `${value} STAR (${formatNight(value)} NIGHT)` : `${value} of token ${type}`;
 
 // ---------- DUST fee ----------
 

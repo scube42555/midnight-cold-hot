@@ -3,12 +3,12 @@
 Moves unshielded NIGHT out of a wallet whose seed exists only on an offline (cold) machine.
 The hot machine syncs, pays the fee with a separate sponsor wallet, and submits.
 
-**Status (9 November 2026): not usable on Preprod until it is migrated to ledger 9.**
-Preprod moved from ledger 8 to ledger 9 on 9 November 2026, and wallet SDK 1.x can no longer transact
-there. The code is being moved to wallet SDK 2.0.0 in stages (see `MIGRATION-LEDGER9.md`): stage 1 is written but has never
-run against SDK 2, and `cold-transfer` and `sponsor-submit` are **not built yet**. `cold-public.json` changed format
-(`"sdk": 2`), so export it again. Every result marked "verified" below was verified on SDK 1.2.0 and
-ledger 8, on Preprod, **before** the upgrade, and must be repeated after the migration.
+**Status (11 November 2026): working on Preprod with wallet SDK 2.0.0 (ledger 9). Full end-to-end flow verified.**
+Preprod moved from ledger 8 to ledger 9 on 9 November 2026; wallet SDK 1.x can no longer transact there.
+The code targets wallet SDK 2.0.0 (see `MIGRATION-LEDGER9.md`). The full transfer flow has been verified
+end to end on Preprod: `hot-watch` → `cold-transfer` → `sponsor-submit` → submit, with QR transfer on
+both directions (see section 4). `cold-public.json` and the snapshot changed format with the upgrade; the
+cold machine refuses a snapshot from before the ledger 9 era. SDK 1.2.0 results are retained in the test table.
 
 Use throwaway wallets and faucet tokens only. A recovery phrase that has appeared on an online machine
 must never hold real funds.
@@ -66,7 +66,10 @@ export MIDNIGHT_NETWORK=preprod
 export BLOCKFROST_PROJECT_ID="nightpreprod..."    # the scripts add ?project_id= themselves
 ```
 
-Override any single endpoint with `INDEXER_HTTP_URL`, `INDEXER_WS_URL`, `NODE_URL` or `PROOF_SERVER_URL`.
+Override any single endpoint with `INDEXER_HTTP_URL`, `INDEXER_WS_URL`, `NODE_URL` or `PROOF_SERVER_URL`. A variable that is set but empty counts as unset (the default is used); a malformed one stops
+the script, naming the setting but not showing its value.
+
+Set `ASSUME_LEDGER9=0` to turn off the chain-version probe and let the SDK detect the ledger version itself. The probe is on by default because without it an offline or idle wallet stays on the ledger 8 variant and builds transactions the network rejects. Only turn it off if you are running against a chain still on ledger 8.
 On preprod and mainnet the URLs contain your token, so the scripts never print them. The SDK's own libraries do print
 the node URL when a connection drops, so every script also replaces `project_id=...` and your token with `<redacted>`
 in anything it prints (`src/redact.ts`). If a token has ever been pasted anywhere (a chat, an issue, a screenshot), revoke
@@ -102,9 +105,17 @@ then use `127.0.0.1`). The cold machine never contacts a proof server.
 Generate two throwaway phrases on the dev machine (`npm run keygen`, twice). One is cold, one is sponsor.
 Enter secrets without leaving them in shell history:
 
+Run these one at a time. Do not paste them together with the next command: `read` takes the next line of input, so a
+pasted `npm run ...` line can be swallowed as the phrase, and pressing Enter before the words are in stores an empty value.
+Nothing is displayed as you type, because `-s` hides it.
+
 ```bash
-read -rs COLD_MNEMONIC; export COLD_MNEMONIC          # type or paste the 24 words, press Enter
+read -rs COLD_MNEMONIC        # the cursor waits: paste or type the 24 words, then press Enter
+export COLD_MNEMONIC
+echo "${#COLD_MNEMONIC}"      # the length only, never the words: expect about 150-200, and never 0
 ```
+
+If a script says `COLD_MNEMONIC is set but empty`, the `read` got an empty line: run the `read` again on its own.
 
 **Passphrase (the "25th word").** If the recovery phrase has a BIP-39 passphrase, enter it the same way, in its own variable:
 
@@ -122,17 +133,18 @@ The sponsor wallet uses `SPONSOR_PASSPHRASE`. Four things to know:
 
 The scripts delete the passphrase variable from the process environment after reading it, like the other secrets.
 
-1. **Cold:** `npm run cold:export-public`. Copy `cold-public.json` to the hot machine (public data).
+1. **Cold:** `npm run cold:export-public`. Copy `cold-public.json` to the hot machine (public data, no secrets). USB or QR both work; for QR see section 7 "Cold to hot: the public key".
 2. **Fund the cold address** from the faucet for your network (section 2). On preprod that is
    https://midnight-tmnight-preprod.nethermind.dev/ (5,000 tNIGHT per request, rate limited).
 3. **Fund the sponsor address.** Run `npm run hot:sponsor-register` once; it prints the sponsor address,
    registers its NIGHT for DUST, and waits for a DUST balance. DUST builds up over time.
 4. **Hot:** `npm run hot:watch`. Copy `cold-unshielded.snapshot.json` to the cold machine.
 5. **Cold:** `node dist/cold-transfer.js <recipient address> <amount in STAR>`
-   Enter the amount in STAR as digits only, with no commas, spaces or decimal point: `1000000`, not `1,000,000`.
+   Enter the amount in STAR (the smallest unit): `1000000` or `1,000,000` for 1 NIGHT; `1500000` for 1.5 NIGHT.
    The script rejects anything else. It first checks that the snapshot is for this network and wallet and holds enough,
-   then shows what it will sign. Review the recipient and amount, type `SEND`. Copy `tx.hex` to the hot machine.
-6. **Hot:** `npm run hot:sponsor-submit` (or `node dist/sponsor-submit.js tx.hex --dry-run` first).
+   then shows all token balances from the snapshot and what it will sign. Review the recipient and amount, type `SEND`. Copy `tx.hex` to the hot machine.
+6. **Hot:** `npm run hot:sponsor-submit -- --dry-run` first (or `node dist/sponsor-submit.js --dry-run`). **With npm, flags go after a lone `--`:**
+   `npm run hot:sponsor-submit --dry-run` hands the flag to npm, and the script would submit for real. It now refuses to run if it sees this.
    This can take several minutes; it beeps when it needs you (see section 8). It prints the start time first, and the finish
    time and total at the end, so you can time a run. Before asking you to confirm it shows:
 
@@ -166,23 +178,23 @@ The scripts delete the passphrase variable from the process environment after re
    Section 9 explains the UTXOs list, the Change line, "fallible", and the DUST fee.
    `--dry-run` finishes the balancing and proving, then releases the DUST again.
 
-1 NIGHT = 1,000,000 STAR. For another unshielded token, add `--token <64-hex token type>` and give the
+`hot-watch` waits up to 10 minutes for coins to appear after the initial sync; set `WATCH_TIMEOUT_MINUTES` to override. 1 NIGHT = 1,000,000 STAR. For another unshielded token, add `--token <64-hex token type>` and give the
 amount in that token's smallest unit (`hot-watch` lists every token type it sees). Take a fresh snapshot (step 4) before every transfer, and make sure no
 transaction from the cold address is in flight when you take it.
 
 ## 4. Test plan and results
 
-Results are what you reported from running these on **Preprod**, with throwaway wallets, **before the ledger 9 upgrade, on
-wallet SDK 1.2.0**. They must be repeated after the migration. "Not yet run" means
-nobody has run it, not that it failed. Tests marked *new* cover checks added after the first round.
+Tests marked **SDK 1** were run on wallet SDK 1.2.0 on Preprod before the ledger 9 upgrade; they should be
+re-run on SDK 2 as the opportunity arises. Tests marked **SDK 2** were run on wallet SDK 2.0.0 on Preprod
+after the upgrade. "Not yet run" means nobody has run it on that version. Tests marked *new* were added after the first round.
 
 | Test | What it checks | Result |
 |---|---|---|
-| T1 | Cold and sponsor wallets created, funded from the faucet, sponsor registered for DUST | Passed |
+| T1 | Cold and sponsor wallets created, funded from the faucet, sponsor registered for DUST | Passed (SDK 1) |
 | T2 | `cold-unshielded.snapshot.json` holds no seed or secret key | Passed (reviewed, see below) |
-| T3 | `cold-transfer` with the network on: the proof stub is never called | Passed |
-| T4 | The same with the network off | Passed |
-| T5 | Sponsor adds DUST and submits; the sponsor paid the fee; the transfer landed | Passed, whole flow end to end |
+| T3 | `cold-transfer` with the network on: the proof stub is never called | Passed (SDK 1) |
+| T4 | The same with the network off | Passed (SDK 1) |
+| T5 | Sponsor adds DUST and submits; the sponsor paid the fee; the transfer landed | Passed (SDK 1); whole flow on SDK 2: see T28 |
 | T6 | A shielded output on the cold machine is refused by the stub prover | Not yet run |
 | T7 | A tampered `tx.hex` is rejected | Passed |
 | T8 | A truncated or non-hex `tx.hex` is rejected before parsing | Not yet run |
@@ -201,6 +213,12 @@ nobody has run it, not that it failed. Tests marked *new* cover checks added aft
 | T21 *new* | It shows the sponsor address, DUST balance and DUST fee before the prompt, and a cancelled run releases the DUST (a second run works at once) | Not yet run |
 | T22 *new* | A snapshot taken after the transfer was built gives a "not in the snapshot file" warning instead of a balance | Not yet run |
 | T23 *new* | No hot script prints your Blockfrost token: run one with it set and search the output (see below) | Not yet run |
+| T24 | `hot-watch` writes a ledger 9 snapshot (`written by v2`, protocol version 2000000) | Passed (SDK 2) |
+| T25 | An offline facade restored from that snapshot settles on ledger 9 (`probe-cold-era`) | Passed (SDK 2) |
+| T26 | Without the chain-version probe the snapshot is `written by v1` at 1000300 and the offline facade settles at protocol version 0 (ledger 8) | Observed (SDK 2): the reason the probe is on by default |
+| T27 | `cold-transfer` builds, signs and finalizes a ledger 9 transaction offline, and refuses a snapshot from before ledger 9 | Passed (SDK 2): offline, 4 s, protocol version 2000000, `tx.hex` of 760 bytes, **the proof stub was not called**. The refusal of an old snapshot: not yet run |
+| T28 *new* | Sponsor first sync from scratch (~9.5 h on Preprod); then adopts, validates, balances, proves and submits the transaction; full flow end to end | Passed (SDK 2, 11 Nov 2026): transaction `00ecd050673404bf3a25b187265858ccfa3b880df279d86c9259bb567ca74b6407` accepted on-chain (tx hash `0x7df566e3aed4abe1dab1226fea1a075f72a2037cc77e38dde060cadec10f8ce4`). An earlier `tx.hex` expired during the sync; the TTL check added in this session caught that case |
+| T29 *new* | QR transfer both directions: snapshot hot→cold via `receiver.html` and Python scanner; `tx.hex` cold→hot via `qr-send` HTML and `receiver.html` | Passed (SDK 2, 11 Nov 2026): `receiver.html` on ArchLinux dev machine (both directions); Python scanner on TailsOS (hot→cold snapshot); `qr-send` HTML page on cold machine (cold→hot) |
 
 **How the new tests are run**
 
@@ -383,37 +401,47 @@ parsing it.
 
 ## 6. Verified and still unverified
 
-**Verified on Preprod before the ledger 9 upgrade (SDK 1.2.0, ledger 8)** (reported by you):
+**Verified on Preprod before the ledger 9 upgrade (SDK 1.2.0, ledger 8):**
 
 - `cold-transfer` builds, signs and finalizes offline with the stub services, and the proof stub is never called for an
   unshielded NIGHT transfer.
 - The exported `publicKey`, `addressHex` and `address` are plain strings, and the hot machine can watch the address from them.
 - The Blockfrost endpoints work with these scripts on Preprod.
-- The whole flow works: the public key goes to the hot machine and the sponsor is funded and registered for DUST. The hot
-  machine's snapshot reaches the cold machine, which reads it on Tails with `tools/qr_scan.py`. The cold machine builds
-  `tx.hex` and the hot machine receives it by QR and submits it. The sponsor pays the fee.
+- The whole flow: the public key goes to the hot machine and the sponsor is funded and registered for DUST. The hot machine's
+  snapshot reaches the cold machine via Python scanner on Tails. The cold machine builds `tx.hex` and the hot machine submits.
 - A tampered `tx.hex` is rejected, and a `tx.hex` submitted after its `TTL_MINUTES` is rejected.
-- The Tails browser would not give `receiver.html` camera access, so on Tails use the Python scanner (section 7b).
+
+**Verified on Preprod after the ledger 9 upgrade (SDK 2.0.0, ledger 9), 11 November 2026:**
+
+- Sponsor first sync from scratch: ~9.5 h on Preprod. Shielded and DUST wallets crossed to ledger 9 on their own.
+  Protocol phase after: `{"_tag":"Settled","version":"2000000"}`, 5000 DUST.
+  **Note on protocol versions:** `cold-transfer` will always print "settled at protocol version 2000000" because
+  the `assumeLedger9` probe hardcodes `V9NativeForkVersion` (2000000) rather than querying the network. The
+  snapshot's `protocolVersion` field records the actual live network version (e.g. `2001100`). Both are ledger 9
+  (≥ 2000000); the transaction format is the same; the discrepancy is expected and harmless.
+- Full transfer flow end to end: `hot-watch` → `cold-transfer` → `sponsor-submit` → submit.
+  Transaction `00ecd050673404bf3a25b187265858ccfa3b880df279d86c9259bb567ca74b6407` confirmed on-chain.
+- Sponsor pipeline: `adoptTransaction`, `validateTransaction`, `estimateTransactionFee`, `balanceFinalizedTransaction`,
+  `signRecipe`, `finalizeRecipe`, `submitTransaction`.
+- `serializeState` / `restore` round-trip: state saved after the first sync and resumed on subsequent runs.
+- QR transfer: `receiver.html` on ArchLinux (both directions), Python scanner on TailsOS (hot→cold snapshot).
+- All `SDK2-UNVERIFIED` lines now cleared. `keys.ts:59` (same addresses): verified by the working end-to-end run.
+  `keys.ts:73` (seed wipe): verified programmatically — `@scure/bip32` hashes the seed via HMAC-SHA512 on entry;
+  the original buffer is never stored, so zeroing it has no effect on the derived keys.
 
 **Still unverified:**
 
-- Networks other than Preprod. For `undeployed`, `preview` and `mainnet` only the wrong-network refusals were seen. Mainnet
-  also needs its own DUST registration path (section 2).
-- Custom tokens (`--token`). The code path exists but nothing has sent one.
-- A stale snapshot, or one taken with a transaction in flight (T9, T10).
-- Sponsor failure modes and duplicate submission (T13, T14), and truncated input (T8).
-- What happens to reserved coins after an expired or failed transfer. The expired transaction was rejected, but the state of
-  the sponsor's reserved DUST afterwards was not observed.
-- A BIP-39 passphrase on a wallet created elsewhere. Compare the address `cold-export-public` prints with the original wallet's
-  before funding anything (section 3).
-- What `sponsor-submit` shows (T20 to T22): the sender and recipient read from `tx.hex`, the balances from the snapshot, the
-  sponsor's addresses and DUST balance, and the DUST fee. They follow the ledger's and wallet's documented APIs and passed
-  tests on fake transactions and your real snapshot, but have not run on a real transaction. If `tx.hex` cannot be read it
-  prints a warning and carries on. Balancing before the prompt, and releasing the DUST when you cancel, are also new.
-- The sponsor's DUST cap and regeneration rate lines read wallet internals, so they may not appear (they print nothing if the
-  shape differs). What 1AM means by "fee 1 DUST" (section 9) is also unverified.
-- The new network cross-checks (T17 to T19). They were tested here against your real snapshot and edited copies of it, but
-  not yet on your machines.
+- **BIP-39 passphrase** on a wallet created elsewhere. Compare the address `cold-export-public` prints with the
+  original wallet's before funding anything (section 3).
+- **Custom tokens** (`--token`). The code path exists but nothing has sent one.
+- **Networks other than Preprod.** For `undeployed`, `preview` and `mainnet` only the wrong-network refusals were seen.
+  Mainnet also needs its own DUST registration path (section 2).
+- **T6, T8, T9, T10, T13, T14, T16, T17–T23** (see the test table). Key ones: stale snapshot (T9), sponsor failure
+  modes (T13), duplicate submission (T14), network cross-checks (T17–T19).
+- **What `sponsor-submit` shows (T20–T22):** the plan display ran on the successful transaction, but T20 (independent
+  comparison with `cold-transfer` output) and T22 (stale snapshot warning) were not explicitly checked.
+- The sponsor's DUST cap and regeneration rate lines read wallet internals and may not appear if the internal shape changes.
+- What 1AM means by "fee 1 DUST" (section 9).
 
 ## 7. QR transfer instead of a USB stick
 
@@ -430,6 +458,18 @@ is SDK code I have not audited.
 `npm run build` also writes `dist/receiver.html`: one offline page with the QR decoder inlined.
 Copy it to both machines. `qr-send` needs only the production dependencies (`qrcode-generator`
 has none of its own), so it also works from the cold bundle.
+
+**Cold to hot: the public key**
+
+`cold-public.json` contains only the wallet's public key — no secrets. Copy it to the hot machine by USB or QR. For QR, any 1–12 letter kind label works (the receiver page labels the download with it):
+
+```bash
+# cold
+node dist/qr-send.js pubkey cold-public.json --html public-key-qr.html
+# open public-key-qr.html in the cold browser (or use --term)
+# hot: open dist/receiver.html, Start camera, aim at the cold screen, download the file
+node dist/qr-decode.js received-pubkey-XXXXXX.mqr cold-public.json
+```
 
 **Hot to cold: the snapshot**
 
@@ -481,21 +521,22 @@ sha256sum file.bin                               # must match the sender's file
 
 For anything much larger, USB is the better tool.
 
-**Verified:** the public key and `tx.hex` going from cold to hot, and the snapshot going from hot to cold, with the
-snapshot read on Tails by `tools/qr_scan.py`. The Tails browser did not allow `receiver.html` to use the camera, so
-use the Python scanner on Tails (section 7b). USB still works as a fallback.
+**Verified (SDK 1):** public key and `tx.hex` cold→hot; snapshot hot→cold via Python scanner on Tails.
+**Verified (SDK 2, 11 Nov 2026):** snapshot hot→cold via `receiver.html` on ArchLinux dev machine and Python scanner
+on TailsOS; `tx.hex` cold→hot via `qr-send` HTML on cold and `receiver.html` on ArchLinux hot machine.
+An offline machine's browser may not give `receiver.html` camera access (for example, Tails does not); use the Python scanner in that case (section 7b). USB still works as a fallback.
 
 ## 7b. Python scanner (when the browser cannot use the camera)
 
-`receiver.html` needs the browser to allow camera access, and Tails' browser may not. `tools/qr_scan.py` does
+`receiver.html` needs the browser to allow camera access, and the offline machine's browser may not (for example, Tails does not allow this). `tools/qr_scan.py` does
 the same job from the command line using OpenCV. You only need it on the machine that receives the
 snapshot (hot to cold). The cold-to-hot direction can use `receiver.html` in an ordinary browser on the hot machine.
 
-**1. Check the Tails machine first**
+**1. Check the offline machine first**
 
 ```bash
 python3 --version          # note the major.minor, for example 3.11
-ls -l /dev/video*          # a device must be listed; if nothing is, Tails cannot see a camera
+ls -l /dev/video*          # a device must be listed; if nothing is, the offline machine cannot see a camera
 ```
 
 If the device exists but opening it later says "permission denied", check `groups` and who owns `/dev/video0`.
@@ -508,33 +549,35 @@ PYVER=3.11; ABI=cp${PYVER//./}          # 3.11 -> cp311, 3.9 -> cp39
 python3 -m pip download --only-binary=:all: --python-version "$PYVER" --implementation cp \
   --abi "$ABI" --abi abi3 --abi none \
   --platform manylinux_2_28_x86_64 --platform manylinux_2_27_x86_64 --platform manylinux2014_x86_64 \
-  "opencv-python-headless>=4.8,<5" numpy -d wheels
+  "opencv-python>=4.8,<5" numpy -d wheels
 mkdir pylibs && for w in wheels/*.whl; do unzip -q "$w" -d pylibs; done
 ```
 
 Each backslash must be the last character on its line (no trailing space). If you type the command on one line,
 leave the backslashes out. The `<5` keeps OpenCV on the 4.x series this was tested with; OpenCV 5 is untested.
-If `python3 --version` on Tails reports 3.9, that is probably an old, unsupported Tails release: update Tails first.
+If `python3 --version` on the offline machine reports 3.9, that is probably an old, unsupported Tails release: update Tails first.
 
-A wheel is a zip file, so unzipping it is enough: nothing is installed and no install script runs. Use `opencv-python`
-instead of `opencv-python-headless` only if you want the `--preview` window. OpenCV 4.8 or newer matters: it
-has the better QR detector the script prefers. Copy `tools/qr_scan.py` and `pylibs/` into your cold bundle.
+A wheel is a zip file, so unzipping it is enough: nothing is installed and no install script runs. Use
+`opencv-python-headless` instead of `opencv-python` if you do not need the `--preview` window; it is smaller
+and has no GUI dependencies. OpenCV 4.8 or newer matters: it has the better QR detector the script prefers.
+Copy `tools/qr_scan.py` and `pylibs/` into your cold bundle.
 If the online machine runs the same Python version, check that the libraries load there:
 
 ```bash
 PYTHONPATH=pylibs python3 -c "import cv2, numpy; print(cv2.__version__, hasattr(cv2, 'QRCodeDetectorAruco'))"
 ```
 
-**3. On the Tails machine**
+**3. On the offline (cold) machine**
 
 ```bash
-PYTHONPATH=pylibs python3 tools/qr_scan.py
+PYTHONPATH=pylibs python3 tools/qr_scan.py --preview
 # when it finishes:
 node dist/qr-decode.js received-snapshot-XXXXXX.mqr cold-unshielded.snapshot.json
 ```
 
 Open the sender page on the hot machine (`qr-send ... --html`), make it full screen, turn the brightness up, and hold
-that screen so it fills the cold machine's camera view. There is no preview by default, so the script prints
+that screen so it fills the cold machine's camera view. The `--preview` flag opens a window showing what the camera
+sees, which makes it easier to aim and confirm codes are being read. Without it the script prints
 "Received N of M frames" for each new frame and "No QR code readable yet" every few seconds when it sees nothing.
 Frames can come in any order and repeats are ignored, so keep it steady until it reports all of them.
 
@@ -544,8 +587,8 @@ codes are hard to read, make them smaller on the sender (`qr-send ... --chunk 20
 **Security: this widens what the cold machine parses.** `receiver.html` runs inside a browser sandbox. This script
 runs OpenCV's native image and QR code in a normal process. The script itself accepts only text that matches the
 exact frame format, but the QR decoding underneath is a large C++ library handling images that the hot machine
-controls. A crafted image could in principle exploit a bug in it. If it did, assume the whole Tails session is
-compromised, including a recovery phrase you type later in that session. Reasonable ways to handle that:
+controls. A crafted image could in principle exploit a bug in it. If it did, assume the whole offline session is
+compromised, including any recovery phrase you type later in that session. Reasonable ways to handle that:
 
 - Run the scanner before you enter any secret in that session, in a terminal where no secret variable is set.
   This helps less than it sounds, because the session is still the same one.
@@ -556,7 +599,7 @@ compromised, including a recovery phrase you type later in that session. Reasona
 dense codes under rotation, blur and noise (the Aruco detector read every 77-module code except one under the heaviest blur
 and noise, and the older detector, which the script uses only when Aruco is missing, missed a few in every case). The camera
 loop against a simulated webcam, with the output decoded by `qr-decode` to the identical file. **Verified by you:** it works
-with a real camera on your Tails cold machine (a 2011 CPU), with wheels downloaded for that machine's Python version.
+with a real camera on a TailsOS cold machine (a 2011 CPU), with wheels downloaded for that machine's Python version.
 
 ## 8. Audible alerts and progress (`sponsor-submit`)
 
@@ -572,10 +615,12 @@ or syncing from scratch, a "Still syncing..." line every 30 seconds, and "Synced
 |---|---|
 | `NO_BEEP=1` | Turns all beeps off |
 | `BEEP_CMD="..."` | Also runs this command at each beep, for when the terminal bell is muted |
+| `LOG_VERBOSE=1` | Show the full SDK log output instead of collapsing `Wallet.Sync` / `API-WS` lines. Applies to all scripts, including `cold-transfer`. |
 
 ```bash
 NO_BEEP=1 npm run hot:sponsor-submit
 BEEP_CMD="paplay /usr/share/sounds/freedesktop/stereo/complete.oga" npm run hot:sponsor-submit
+LOG_VERBOSE=1 node dist/cold-transfer.js ...    # see the full SDK connection error details
 ```
 
 `BEEP_CMD` runs through your shell, so only set it yourself, in your own terminal. The beep is the

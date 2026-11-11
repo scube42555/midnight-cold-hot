@@ -14,9 +14,5 @@
   },
   "include": [
     "src/**/*.ts"
-  ],
-  "exclude": [
-    "src/cold-transfer.ts",
-    "src/sponsor-submit.ts"
   ]
 }

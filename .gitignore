@@ -1,6 +1,7 @@
 # Build output and dependencies (rebuilt from the lockfile)
 node_modules
 dist
+dist-test
 *.tsbuildinfo
 
 # Secrets and wallet data: NEVER commit. The pre-commit hook also blocks these by name.

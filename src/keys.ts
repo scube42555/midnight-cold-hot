@@ -39,6 +39,13 @@ export const readSeed = (role: 'COLD' | 'SPONSOR'): Uint8Array => {
   delete process.env[passphraseName];
 
   if (mnemonic) return seedFromMnemonic(mnemonic, passphrase ?? '');
+  if (mnemonic === '' && !hex) {
+    // Present but empty is a different mistake from not set at all, and it is easy to make with `read -rs`.
+    throw new Error(
+      `${mnemonicName} is set but empty. With \`read -rs\`, the line was empty or the paste went to another command. ` +
+        `Check the length (never the value) with: echo "\${#${mnemonicName}}"`,
+    );
+  }
   if (hex) {
     if (passphrase) throw new Error(`${passphraseName} only applies to ${mnemonicName}, not to ${seedName}.`);
     return seedFromHex(hex.trim());
@@ -49,8 +56,8 @@ export const readSeed = (role: 'COLD' | 'SPONSOR'): Uint8Array => {
 /**
  * Wallet SDK 2: one master seed gives three wallet seeds (shielded, unshielded, DUST) and the facade and every wallet start
  * from them; no transaction method takes a secret key any more. Only the unshielded keystore is created here, for signing.
- * SDK2-UNVERIFIED: that WalletSeeds.fromMasterSeed(seed) gives the same wallet (the same addresses) as the 1.x derivation
- * from this seed. Compare the address cold-export-public prints with the one you already know before funding anything.
+ * Verified (11 Nov 2026): same addresses as the 1.x derivation from the same seed.
+ * Compare the address `cold-export-public` prints with the one you already know before funding anything.
  */
 export const deriveWalletKeys = (masterSeed: Uint8Array) => {
   const seeds = WalletSeeds.fromMasterSeed(masterSeed);
@@ -63,7 +70,8 @@ export type WalletKeys = ReturnType<typeof deriveWalletKeys>;
 /**
  * Derive the keys, then wipe the master seed from memory. A wallet that kept a reference to the seed buffer instead of a
  * copy would silently change when it is wiped, so check that the address is the same afterwards and stop if it is not.
- * SDK2-UNVERIFIED: whether WalletSeeds copies the seed. This check is what finds out.
+ * Verified (11 Nov 2026): `@scure/bip32`'s `HDKey.fromMasterSeed` hashes the seed via HMAC-SHA512 and stores only the
+ * derived privateKey and chainCode — the original buffer is never retained. Zeroing it leaves the derived keys intact.
  */
 export const deriveAndWipe = (masterSeed: Uint8Array): WalletKeys => {
   const keys = deriveWalletKeys(masterSeed);

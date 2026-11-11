@@ -9,6 +9,11 @@ export type SnapshotInfo = {
   available: Map<string, bigint>;
   availableCount: number;
   pendingCount: number;
+  /** SDK 2 wraps the snapshot with `version` and `writtenBy`; SDK 1.x snapshots have neither. */
+  format?: string;
+  writtenBy?: string;
+  /** The wallet's own record. For an idle address it can be older than the chain's current protocol version. */
+  protocolVersion?: string;
   /** Each available coin's identifiers, so a transaction's inputs can be matched against the snapshot. */
   utxos: { intentHash: string; outputNo: number; type: string; value: bigint }[];
 };
@@ -54,6 +59,9 @@ export const inspectSnapshot = (text: string): SnapshotInfo => {
     available,
     availableCount: (root.state.availableUtxos as unknown[]).length,
     pendingCount: (root.state.pendingUtxos as unknown[]).length,
+    format: typeof root.version === 'string' ? root.version : undefined,
+    writtenBy: typeof root.writtenBy === 'string' ? root.writtenBy : undefined,
+    protocolVersion: typeof root.protocolVersion === 'string' ? root.protocolVersion : undefined,
     utxos,
   };
 };
@@ -70,6 +78,25 @@ export const assertSnapshotFor = (info: SnapshotInfo, expected: { network: strin
     throw new Error(
       `The snapshot is for address ${info.address}, not this wallet's address ${expected.address}. ` +
         'Stopping: it was made for a different wallet (or a different passphrase).',
+    );
+  }
+};
+
+/** The protocol version a 2.x node reports, from which wallets read the chain as ledger 9. */
+export const LEDGER9_PROTOCOL_VERSION = 2_000_000n;
+
+/**
+ * Refuse a snapshot that the cold machine could only turn into a ledger 8 transaction. A wallet restored from a snapshot goes
+ * "into whichever variant wrote it", and an offline machine has no way to cross to ledger 9 by itself, so the snapshot must already
+ * be on ledger 9. Measured: a snapshot written without the chain-version probe said protocol version 1000300, written by v1.
+ */
+export const assertLedger9 = (info: SnapshotInfo): void => {
+  const version = info.protocolVersion !== undefined && /^[0-9]+$/.test(info.protocolVersion) ? BigInt(info.protocolVersion) : undefined;
+  if (version === undefined || version < LEDGER9_PROTOCOL_VERSION) {
+    throw new Error(
+      `The snapshot's protocol version is ${info.protocolVersion ?? 'missing'}, below ${LEDGER9_PROTOCOL_VERSION} (ledger 9), written by ${info.writtenBy ?? 'an unknown variant'}. ` +
+        'An offline wallet restored from it would build ledger 8 transactions, which the network refuses. ' +
+        'Take a new snapshot with hot-watch from this version of the scripts.',
     );
   }
 };

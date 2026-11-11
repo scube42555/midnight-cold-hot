@@ -8,14 +8,16 @@
   },
   "scripts": {
     "build": "tsc && node scripts/build-receiver.mjs",
+    "test": "tsc --project tsconfig.test.json && node --test dist-test/tests/*.js",
     "keygen": "node dist/keygen.js",
     "cold:export-public": "node dist/cold-export-public.js",
     "hot:watch": "node dist/hot-watch.js",
-    "cold:transfer": "node scripts/not-migrated.mjs cold-transfer",
+    "cold:transfer": "node dist/cold-transfer.js",
     "hot:sponsor-register": "node dist/sponsor-register.js",
-    "hot:sponsor-submit": "node scripts/not-migrated.mjs sponsor-submit",
+    "hot:sponsor-submit": "node dist/sponsor-submit.js",
     "qr:send": "node dist/qr-send.js",
-    "qr:decode": "node dist/qr-decode.js"
+    "qr:decode": "node dist/qr-decode.js",
+    "probe:cold-era": "node dist/probe-cold-era.js"
   },
   "dependencies": {
     "@midnightntwrk/wallet-sdk": "2.0.0",
