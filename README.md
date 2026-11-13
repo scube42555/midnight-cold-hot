@@ -445,6 +445,8 @@ parsing it.
   comparison with `cold-transfer` output) and T22 (stale snapshot warning) were not explicitly checked.
 - The sponsor's DUST cap and regeneration rate lines read wallet internals and may not appear if the internal shape changes.
 - What 1AM means by "fee 1 DUST" (section 9).
+- `qr_scan.py --clipboard`: not yet run on a real machine. Checked with a fake camera and fake clipboard tools (tool
+  order, fallbacks, nothing copied on a checksum mismatch); none of `wl-copy`, `xclip`, `xsel` or Tk was available to test for real.
 
 ## 7. QR transfer instead of a USB stick
 
@@ -586,8 +588,15 @@ sees, which makes it easier to aim and confirm codes are being read. Without it 
 "Received N of M frames" for each new frame and "No QR code readable yet" every few seconds when it sees nothing.
 Frames can come in any order and repeats are ignored, so keep it steady until it reports all of them.
 
-Options: `--device /dev/video0` (or another index), `--out-dir`, `--timeout SECONDS`, `--preview`. If dense
+Options: `--device /dev/video0` (or another index), `--out-dir`, `--timeout SECONDS`, `--preview`, `--clipboard`. If dense
 codes are hard to read, make them smaller on the sender (`qr-send ... --chunk 200`) and give the camera more room.
+
+`--clipboard` also puts the frames on the clipboard once the checksum passes, for pages that accept pasted MQR1
+text (for example the DUST registration cold page). The `.mqr` file is written either way. It uses `wl-copy`
+(Wayland), `xclip` or `xsel` if one is installed; otherwise it opens a small tkinter window that holds the
+clipboard until you click *Done* (a Linux clipboard disappears when the program that owns it exits). If none of
+these works, it says so and you load the `.mqr` file instead. The frames are not secret, but anything on the
+clipboard can be read by other programs in the session.
 
 **Security: this widens what the cold machine parses.** `receiver.html` runs inside a browser sandbox. This script
 runs OpenCV's native image and QR code in a normal process. The script itself accepts only text that matches the

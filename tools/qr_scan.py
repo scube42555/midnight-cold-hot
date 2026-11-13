@@ -3,12 +3,15 @@
 
 For machines where the browser page (receiver.html) cannot use the camera, such as Tails.
 
-    python3 tools/qr_scan.py [--device 0] [--out-dir .] [--timeout SECONDS] [--preview]
+    python3 tools/qr_scan.py [--device 0] [--out-dir .] [--timeout SECONDS] [--preview] [--clipboard]
 
 It reads QR codes from the camera, keeps only text that matches the exact frame format written by
 qr-send, locks onto the first transfer it sees, and stops when every frame has arrived. It then writes
 received-<kind>-<session>.mqr (one frame per line) and checks the SHA-256. Run
 `node dist/qr-decode.js <that file> <output file>` afterwards, which does the final, authoritative check.
+
+With --clipboard it also puts the frames on the clipboard (after the checksum passes), so they can be pasted
+into a page that accepts MQR1 text. It uses wl-copy, xclip or xsel if one is installed, otherwise tkinter.
 
 The script does no other parsing of what it reads. The only complex parser involved is OpenCV's QR
 decoder, which handles images from the camera; see the README before using it on a machine that holds keys.
@@ -18,6 +21,8 @@ import base64
 import hashlib
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 
@@ -178,12 +183,60 @@ def write_frames(collector, out_dir):
     return path
 
 
-def main(argv=None, opener=camera_texts):
+# Clipboard tools, tried in order. Each reads the text on stdin and keeps serving the clipboard after we exit.
+CLIPBOARD_TOOLS = [
+    ("wl-copy", ["wl-copy"], "WAYLAND_DISPLAY"),
+    ("xclip", ["xclip", "-selection", "clipboard", "-in"], "DISPLAY"),
+    ("xsel", ["xsel", "--clipboard", "--input"], "DISPLAY"),
+]
+
+
+def tk_clipboard(text, out=print):
+    """Hold the text on the clipboard with tkinter until the user closes its small window.
+
+    X11 and Wayland clipboards are served by the program that owns them: when this process exits, the text is
+    gone. So keep a window open and the Tk event loop running until the user has pasted."""
+    import tkinter
+
+    root = tkinter.Tk()
+    root.title("QR scan: clipboard")
+    root.clipboard_clear()
+    root.clipboard_append(text)
+    tkinter.Label(root, text="The frames are on the clipboard.\nPaste them into the page, then click Done.",
+                  padx=16, pady=12).pack()
+    tkinter.Button(root, text="Done", command=root.destroy).pack(pady=(0, 12))
+    out("The frames are on the clipboard. Paste them into the page, then click Done in the small window.")
+    root.mainloop()
+
+
+def copy_to_clipboard(text, out=print, which=shutil.which, run=subprocess.run, env=os.environ, tk=tk_clipboard):
+    """Put text on the clipboard. Returns the method used, or None if nothing worked."""
+    data = text.encode("ascii")  # frames are ASCII by construction
+    for name, argv, display_var in CLIPBOARD_TOOLS:
+        if not env.get(display_var) or not which(argv[0]):
+            continue
+        try:
+            run(argv, input=data, check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return name
+        except (OSError, subprocess.SubprocessError):
+            continue
+    if not (env.get("DISPLAY") or env.get("WAYLAND_DISPLAY")):
+        return None
+    try:
+        tk(text, out)
+        return "tkinter"
+    except Exception:  # tkinter missing, or no display it can open
+        return None
+
+
+def main(argv=None, opener=camera_texts, copier=copy_to_clipboard):
     parser = argparse.ArgumentParser(description="Scan transfer frames from a webcam.")
     parser.add_argument("--device", default="0", help="camera index or path, e.g. 0 or /dev/video0 (default 0)")
     parser.add_argument("--out-dir", default=".", help="where to write the received file (default: current folder)")
     parser.add_argument("--timeout", type=float, default=None, help="give up after this many seconds")
     parser.add_argument("--preview", action="store_true", help="show the camera image, if this OpenCV build can")
+    parser.add_argument("--clipboard", action="store_true",
+                        help="also put the frames on the clipboard, to paste into a page (after the checksum passes)")
     args = parser.parse_args(argv)
 
     if not os.path.isdir(args.out_dir):
@@ -212,6 +265,14 @@ def main(argv=None, opener=camera_texts):
     print("Wrote %s" % path)
     if not ok:
         return 3
+    if args.clipboard:
+        method = copier("\n".join(collector.lines()) + "\n")
+        if method:
+            if method != "tkinter":
+                print("Copied the frames to the clipboard (%s). Paste them into the page." % method)
+        else:
+            print("Could not use the clipboard (no wl-copy, xclip, xsel or tkinter with a display). "
+                  "Load %s in the page instead." % path)
     print("Next: node dist/qr-decode.js %s <output file>" % path)
     return 0
 
