@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Midnight Cold Transfer</title>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1f22; --muted: #5d636b; --line: #dcd9d1;
+  --accent: #2f5d8a; --accent-ink: #ffffff; --ok: #1f7a46; --ok-bg: #e6f3ea; --err: #a3241c; --err-bg: #fbe9e7;
+  --warn: #8a5a00; --warn-bg: #fdf3dc; --info-bg: #eef2f7; --code-bg: #f1efe9;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171a; --panel: #1e2125; --ink: #e8e6e1; --muted: #9aa0a8; --line: #33373d;
+    --accent: #7fb0e0; --accent-ink: #0d1520; --ok: #6fcf97; --ok-bg: #16281e; --err: #ff8a80; --err-bg: #331a18;
+    --warn: #f2c66d; --warn-bg: #2e2614; --info-bg: #1c2430; --code-bg: #26292e;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 920px; margin: 0 auto; padding: 20px 16px 64px; }
+h1 { font-size: 22px; margin: 4px 0 2px; }
+h2 { font-size: 17px; margin: 0 0 10px; display: flex; gap: 10px; align-items: baseline; }
+h3 { font-size: 15px; margin: 14px 0 4px; }
+ol.sub { padding-left: 22px; margin-top: -8px; }
+h2 .n { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 14px; flex: none; }
+p { margin: 6px 0; }
+.sub { color: var(--muted); margin: 0 0 16px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 14px 0; }
+section.locked { opacity: .55; }
+.dropping { outline: 2px dashed var(--accent); outline-offset: 4px; }
+label { display: block; font-weight: 600; margin: 10px 0 4px; }
+label .hint { font-weight: 400; color: var(--muted); }
+textarea, input[type=text], input[type=password], input[type=number], select {
+  width: 100%; font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px;
+}
+input[type=number] { width: 7em; }
+textarea { min-height: 70px; resize: vertical; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; }
+.row > div { min-width: 0; }
+button, .btn {
+  font: inherit; font-weight: 600; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--accent-ink); cursor: pointer; text-decoration: none; display: inline-block;
+}
+button.secondary, .btn.secondary { background: transparent; color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.banner { border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+.banner.err { background: var(--err-bg); color: var(--err); }
+.banner.warn { background: var(--warn-bg); color: var(--warn); }
+.banner.ok { background: var(--ok-bg); color: var(--ok); }
+.banner.info { background: var(--info-bg); }
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 8px 0 0; }
+dl.kv dt { color: var(--muted); }
+dl.kv dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; overflow-wrap: anywhere; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12.5px; margin: 8px 0; }
+ul.checks { list-style: none; padding: 0; margin: 8px 0; }
+ul.checks li { padding: 6px 10px 6px 34px; border-radius: 6px; margin: 4px 0; position: relative; }
+ul.checks li::before { position: absolute; left: 10px; top: 6px; font-weight: 700; }
+ul.checks li.ok { background: var(--ok-bg); } ul.checks li.ok::before { content: "✓"; color: var(--ok); }
+ul.checks li.error { background: var(--err-bg); color: var(--err); } ul.checks li.error::before { content: "✗"; }
+ul.checks li.warn { background: var(--warn-bg); color: var(--warn); } ul.checks li.warn::before { content: "!"; }
+ul.checks li.info { background: var(--info-bg); } ul.checks li.info::before { content: "i"; color: var(--muted); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.tablewrap { overflow-x: auto; }
+.qrbox { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 12px; }
+.qr { background: #fff; border-radius: 6px; padding: 6px; width: 100%; max-width: 360px; }
+.qrmeta pre, #witness { white-space: pre-wrap; word-break: break-all; }
+.qr svg { display: block; width: 100%; height: auto; }
+.qrmeta { color: var(--muted); font-size: 13px; }
+video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
+.tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 12px; background: var(--info-bg); }
+.tag.you { background: var(--ok-bg); color: var(--ok); }
+[hidden] { display: none !important; }
+@media (max-width: 640px) { .qrbox { grid-template-columns: 1fr; } dl.kv { grid-template-columns: 1fr; } dl.kv dd { margin-bottom: 6px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Midnight cold transfer</h1>
+  <p class="sub">Sends unshielded NIGHT (or another unshielded token) from a wallet whose recovery phrase is typed only here.
+    Use this page on an offline machine: it never connects to a network, and its security policy forbids it. It builds and
+    signs the transfer from a snapshot of the wallet's coins made on the online (hot) machine; a sponsor wallet there pays
+    the fee and submits. It does the work of <span class="mono">cold-export-public</span> and <span class="mono">cold-transfer</span>.</p>
+  <div id="online" class="banner info" hidden>Reminder: make sure this machine is offline (cable unplugged, Wi-Fi and Bluetooth off). The browser reports a network link, but browsers say that whenever any network adapter is up, so it cannot tell whether the machine can actually reach the internet.</div>
+  <div id="loading" class="banner info">Loading the ledger module (about 11 MB; this can take a while on an old machine)…</div>
+  <div id="fatal" class="banner err" hidden></div>
+
+  <section id="s1">
+    <h2><span class="n">1</span>Your wallet</h2>
+    <div class="row">
+      <div><label for="network">Network</label>
+        <select id="network">
+          <option value="preprod" selected>Preprod (testing)</option>
+          <option value="preview">Preview (testing)</option>
+          <option value="undeployed">Undeployed (local)</option>
+          <option value="mainnet">Mainnet (real funds)</option>
+        </select></div>
+    </div>
+    <div id="mainnetRow" class="banner warn" hidden>
+      <label for="mainnetOk" style="font-weight:400;margin:0"><input id="mainnetOk" type="checkbox"> Mainnet moves real funds and this page
+        has not been run on mainnet. I have completed the test plan on preprod and want to continue.</label>
+    </div>
+    <label for="phrase">Recovery phrase <span class="hint">(12 to 24 words; stays on this page)</span></label>
+    <textarea id="phrase" rows="3" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+    <label for="pass">Passphrase <span class="hint">(optional BIP-39 "25th word", used exactly as typed; leave empty if you have none)</span></label>
+    <input id="pass" type="password" autocomplete="off" spellcheck="false">
+    <div class="actions"><button id="derive" type="button" disabled>Derive address</button>
+      <button id="clear" class="secondary" type="button">Clear everything</button></div>
+    <div id="keysErr" class="banner err" hidden></div>
+    <div id="keysOut" hidden>
+      <div class="banner info">Compare this address with the one you already know for this wallet <strong>before</strong> going on.
+        A mistyped passphrase gives a different, empty wallet, and nothing warns you.</div>
+      <dl class="kv">
+        <dt>Network</dt><dd id="kNetwork"></dd>
+        <dt>Address</dt><dd id="kAddress"></dd>
+      </dl>
+      <h3>Public key file for the hot machine</h3>
+      <p>The hot machine watches this address with <span class="mono">hot-watch</span>, which needs this file as
+        <span class="mono">cold-public.json</span>. It holds public data only. Needed once per wallet and network.</p>
+      <pre id="public"></pre>
+      <div class="actions">
+        <button id="publicQr" type="button">Show as QR</button>
+        <a id="publicDl" class="btn secondary" download="cold-public.json">Download cold-public.json</a>
+      </div>
+      <div id="publicQrBox"></div>
+    </div>
+  </section>
+
+  <section id="s2" class="locked">
+    <h2><span class="n">2</span>Receive the snapshot</h2>
+    <p>On the hot machine, <span class="mono">hot-watch</span> writes <span class="mono">cold-unshielded.snapshot.json</span>.
+      Take a fresh one before every transfer: a snapshot is out of date as soon as the wallet spends. Bring it here in one of three ways:</p>
+    <ul>
+      <li><strong>File</strong>: drop the snapshot (or a <span class="mono">.mqr</span> file of it) on this page, or load it.</li>
+      <li><strong>Python scanner</strong> (when the browser cannot use the camera, e.g. on Tails): run
+        <span class="mono">python3 tools/qr_scan.py</span>, then drop the <span class="mono">received-snapshot-*.mqr</span> file here.
+        With <span class="mono">--clipboard</span> it also copies the frames: paste them in the box below.</li>
+      <li><strong>Camera</strong>: scan the hot machine's QR codes (<span class="mono">qr-send snapshot …</span>) with this browser, if it can use the camera.</li>
+    </ul>
+    <div class="actions">
+      <input id="snapFile" type="file" hidden>
+      <button id="snapFileBtn" type="button" disabled>Load file…</button>
+      <button id="camBtn" class="secondary" type="button" disabled>Scan with camera</button>
+      <button id="camStop" class="secondary" type="button" hidden>Stop camera</button>
+    </div>
+    <div id="camBox" hidden><p id="camStatus" class="qrmeta"></p><video id="video" playsinline muted></video><canvas id="canvas" hidden></canvas></div>
+    <label for="snapText">Or paste <span class="hint">(the snapshot JSON, or MQR1 frames of kind "snapshot")</span></label>
+    <textarea id="snapText" rows="4" spellcheck="false"></textarea>
+    <div class="actions"><button id="snapCheck" type="button" disabled>Check snapshot</button></div>
+    <div id="snapErr" class="banner err" hidden></div>
+    <div id="snapOut" hidden>
+      <ul id="snapChecks" class="checks"></ul>
+      <dl class="kv" id="snapKv"></dl>
+    </div>
+  </section>
+
+  <section id="s3" class="locked">
+    <h2><span class="n">3</span>The transfer</h2>
+    <label for="to">Recipient address <span class="hint">(unshielded, starts with mn_addr)</span></label>
+    <textarea id="to" rows="2" spellcheck="false" autocomplete="off" autocapitalize="off" style="min-height:0"></textarea>
+    <div class="row">
+      <div style="flex:1"><label for="token">Token</label><select id="token"></select></div>
+    </div>
+    <div class="row">
+      <div><label for="amount">Amount <span class="hint" id="amountHint"></span></label>
+        <input id="amount" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" style="width:22em;max-width:100%"></div>
+      <div><label for="ttl">Valid for <span class="hint">(minutes after signing)</span></label>
+        <input id="ttl" type="text" inputmode="numeric" value="120" autocomplete="off" style="width:7em"></div>
+    </div>
+    <p class="qrmeta" id="amountEcho"></p>
+    <div class="actions"><button id="review" type="button" disabled>Review</button></div>
+    <div id="planErr" class="banner err" hidden></div>
+  </section>
+
+  <section id="s4" class="locked">
+    <h2><span class="n">4</span>Review and sign</h2>
+    <div id="planWarn"></div>
+    <dl class="kv" id="planKv"></dl>
+    <div class="tablewrap" id="planCoins"></div>
+    <p>The expiry time is set from <strong>this machine's clock</strong> when you sign. It now shows
+      <span class="mono" id="clock"></span>. If that is wrong, the hot machine may find the transfer already expired, or valid far longer than you meant.</p>
+    <p>Check the recipient and the amount above. Type <strong>SEND</strong> to sign.</p>
+    <div class="row"><div><label for="confirm">Confirmation</label><input id="confirm" type="text" autocomplete="off" spellcheck="false" style="width:10em"></div>
+      <div><button id="sign" type="button" disabled>Sign</button></div></div>
+    <div id="signErr" class="banner err" hidden></div>
+  </section>
+
+  <section id="s5" class="locked">
+    <h2><span class="n">5</span>Take the signed transfer to the hot machine</h2>
+    <div id="txOut" hidden>
+      <div class="banner ok" id="txBanner"></div>
+      <pre id="txPlan"></pre>
+      <p>Save it as <span class="mono">tx.hex</span> on the hot machine and run <span class="mono">sponsor-submit</span> before the expiry time.
+        Then take a fresh snapshot before the next transfer.</p>
+      <label for="txHex">tx.hex</label>
+      <pre id="txHex" style="white-space:pre-wrap;word-break:break-all"></pre>
+      <div class="actions"><a id="txDl" class="btn secondary" download="tx.hex">Download tx.hex</a></div>
+      <div id="txQrBox"></div>
+    </div>
+  </section>
+</main>
+
+<script>/*BUNDLE*/</script>
+</body>
+</html>

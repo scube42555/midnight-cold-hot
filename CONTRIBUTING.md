@@ -60,7 +60,7 @@ addresses in documentation and tests.
 | `build` | Build, dependencies, the lockfile |
 | `chore` | Everything else |
 
-Scopes: `cold`, `hot`, `sponsor`, `qr`, `scanner`, `config`, `keys`, `snapshot`, `readme`, `deps`, `bundle`.
+Scopes: `cold`, `coldpage`, `hot`, `sponsor`, `qr`, `scanner`, `config`, `keys`, `snapshot`, `readme`, `deps`, `bundle`.
 
 The body says **why**, and what could go wrong. Two trailers go at the bottom of every commit:
 
@@ -86,11 +86,15 @@ These run on the machine that holds the seed. A change to any of them gets a sec
 `Touches-cold: yes`:
 
 - `src/` files: `cold-export-public`, `cold-transfer`, `keygen`, `qr-send`, `qr-decode`, and everything they import:
-  `config`, `keys`, `hex`, `mqr`, `qr-render`, `redact`, `snapshot`.
+  `config`, `keys`, `hex`, `mqr`, `mqr-core`, `qr-render`, `redact`, `snapshot`.
+- The cold page (`dist/cold-page.html`): `src/coldpage/`, `cold-page/cold-page.template.html`, `scripts/build-cold-page.mjs`, the
+  modules it bundles (`mqr-core`, `snapshot`, `txinfo`, `timefmt`, `hex`), and **every package the build prints as inlined**, including
+  the devDependencies `fflate`, `@noble/hashes`, `@scure/base` and `jsqr`: inside the page they run next to the recovery phrase.
+  `esbuild` writes the page, so an `esbuild` change is a cold-side change too.
 - `tools/qr_scan.py`.
 - The **production dependency set** (`dependencies` in `package.json` and its lockfile entries), because every package in
   `node_modules` can read the seed.
-- `src/` files that only run on the hot machine (`hot-watch`, `sponsor-*`, `wallet`, `crosscheck`, `txinfo`, `timefmt`, `beep`)
+- `src/` files that only run on the hot machine (`hot-watch`, `sponsor-*`, `wallet`, `crosscheck`, `beep`)
   are not in that list. Anything they add must not leak into the cold imports.
 
 ## Dependencies
@@ -121,5 +125,5 @@ different archive hashes (file times), so record the hash of the archive you act
 
 Update `README.md` in the same commit as the behaviour change: the test table (section 4), "Verified and still unverified"
 (section 6), and any new environment variable. A test is **verified** only if it was run on a real network; code that
-passed tests against fake data is "not yet run". Tests are not in the repository yet; if you add them, put them in `tests/`,
-keep them free of the SDK, and add an `npm test` script.
+passed tests against fake data is "not yet run". Unit tests go in `tests/` and stay free of the SDK (`npm test`). Tests that
+need the SDK go in `tests-sdk/` (`npm run test:sdk`); `npm run test:page` drives the built cold page in headless Chromium.

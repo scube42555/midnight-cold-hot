@@ -23,6 +23,7 @@ must never hold real funds.
 | `sponsor-register` | hot | `SPONSOR_MNEMONIC` or `SPONSOR_SEED`; `SPONSOR_PASSPHRASE` (optional) | One-time: registers the sponsor's NIGHT for DUST |
 | `cold-transfer` | cold | `COLD_MNEMONIC` or `COLD_SEED`; `COLD_PASSPHRASE` (optional) | Builds, signs, finalizes the transfer, writes `tx.hex` |
 | `sponsor-submit` | hot | `SPONSOR_MNEMONIC` or `SPONSOR_SEED`; `SPONSOR_PASSPHRASE` (optional) | Adds DUST for the fee and submits `tx.hex` |
+| `dist/cold-page.html` | cold, in a browser | recovery phrase typed into the page | Does the work of `cold-export-public` and `cold-transfer` without Node (section 10). **Not yet run on a real network** |
 
 The cold and sponsor wallets use different variable names on purpose, so they cannot be mixed up.
 The scripts delete the variable from the process environment once they have read it. A BIP-39 passphrase goes in `COLD_PASSPHRASE` or `SPONSOR_PASSPHRASE` (section 3).
@@ -37,7 +38,9 @@ export PATH="$HOME/node22/bin:$PATH"     # the unpacked official Node 22 linux-x
 node --version
 npm install                               # creates package-lock.json: commit it and keep it pinned
 npm run build                             # compiles src/ to dist/; fix any type errors first
-npm test                                  # SDK-free unit tests (logfilter, snapshot, txinfo)
+npm test                                  # SDK-free unit tests (logfilter, snapshot, txinfo, mqr, cold page core)
+npm run test:sdk                          # cold page code compared with the wallet SDK (imports the SDK; offline)
+npm run test:page                         # dist/cold-page.html driven in headless Chromium (needs chromium)
 ```
 
 If `npm run build` reports an error, send me the message. A renamed export or type is the most
@@ -222,6 +225,10 @@ after the upgrade. "Not yet run" means nobody has run it on that version. Tests 
 | T27 | `cold-transfer` builds, signs and finalizes a ledger 9 transaction offline, and refuses a snapshot from before ledger 9 | Passed (SDK 2): offline, 4 s, protocol version 2000000, `tx.hex` of 760 bytes, **the proof stub was not called**. The refusal of an old snapshot: not yet run |
 | T28 *new* | Sponsor first sync from scratch (~9.5 h on Preprod); then adopts, validates, balances, proves and submits the transaction; full flow end to end | Passed (SDK 2, 11 Nov 2026): transaction `00ecd050673404bf3a25b187265858ccfa3b880df279d86c9259bb567ca74b6407` accepted on-chain (tx hash `0x7df566e3aed4abe1dab1226fea1a075f72a2037cc77e38dde060cadec10f8ce4`). An earlier `tx.hex` expired during the sync; the TTL check added in this session caught that case |
 | T29 *new* | QR transfer both directions: snapshot hot→cold via `receiver.html` and Python scanner; `tx.hex` cold→hot via `qr-send` HTML and `receiver.html` | Passed (SDK 2, 11 Nov 2026): `receiver.html` on ArchLinux dev machine (both directions); Python scanner on TailsOS (hot→cold snapshot); `qr-send` HTML page on cold machine (cold→hot) |
+| T30 *new* | Cold page: the address and `cold-public.json` it shows match `cold-export-public` for the same phrase and passphrase | Not yet run on a real wallet. On fake data: passed (`test:sdk`, `test:page`) |
+| T31 *new* | Cold page offline on the cold machine: loads a real `hot-watch` snapshot, signs after `SEND`, and `sponsor-submit` accepts and submits its `tx.hex` | **Not yet run** |
+| T32 *new* | Cold page in the cold machine's own browser (Tails / Tor Browser): the ledger module starts, file and paste input work | **Not yet run** |
+| T33 *new* | Cold page refuses a snapshot for another network, another wallet or from before ledger 9, and an amount above the balance | Not yet run on real files. On fake data: passed (`test:page`) |
 
 **How the new tests are run**
 
@@ -304,7 +311,7 @@ Node tarball you will run offline. The examples use `node-v22.23.4-linux-x64.tar
    node --version                      # must print v22.23.4
    cd "$PROJECT"
    npm ci                              # all dependencies, including dev, from the lockfile
-   npm run build                       # writes dist/ and dist/receiver.html
+   npm run build                       # writes dist/, dist/receiver.html and dist/cold-page.html
    ```
 
 3. **Assemble a clean bundle.** It holds only production dependencies, so `typescript` and `jsqr` stay out of the offline machine.
@@ -445,6 +452,10 @@ parsing it.
   comparison with `cold-transfer` output) and T22 (stale snapshot warning) were not explicitly checked.
 - The sponsor's DUST cap and regeneration rate lines read wallet internals and may not appear if the internal shape changes.
 - What 1AM means by "fee 1 DUST" (section 9).
+- **The cold page (`dist/cold-page.html`, section 10): not yet run on a real network.** It builds the transaction with the ledger 9
+  package directly, not through the wallet SDK. On fake data its transactions have the same inputs, outputs, expiry and placement
+  as the SDK's and the SDK's own reader accepts them, but no transaction made by the page has been submitted (T30–T33). It has only
+  been opened in Chromium on the dev machine: not in Tor Browser, not on Tails, not on the 2011 cold machine. Its camera input has not been tried.
 - `qr_scan.py --clipboard`: not yet run on a real machine. Checked with a fake camera and fake clipboard tools (tool
   order, fallbacks, nothing copied on a checksum mismatch); none of `wl-copy`, `xclip`, `xsel` or Tk was available to test for real.
 
@@ -712,3 +723,55 @@ carries on, and your run still reached "Synced". It matters only if the sync nev
 
 **Tokens in logs.** Your log contained your Blockfrost token because the node library prints its connection URL when it
 disconnects. The scripts now redact it (section 2). Revoke any token that has been posted anywhere.
+
+## 10. Cold page: the cold side in a browser
+
+`npm run build` also writes `dist/cold-page.html`: one self-contained file (about 15 MB) that does what `cold-export-public`
+and `cold-transfer` do, in a browser, with no Node on the cold machine. **Status: built and tested on fake data only; not yet
+run on a real network (T30–T33).** Until those pass, the Node scripts are the verified path.
+
+**What it is.** The page holds the ledger 9 WebAssembly module (the same one the wallet SDK uses), its JavaScript glue, and a
+few plain-JavaScript libraries: `@scure/bip39`, `@scure/bip32` and the SDK's HD package for the keys, `fflate` and
+`@noble/hashes` for QR frames, `qrcode-generator` and `jsqr` for the codes. The build prints the list and the file's SHA-256.
+It does **not** contain the wallet SDK's wallets or its network code. It builds the transfer with the same ledger calls the SDK
+makes for an unshielded transfer with `payFees: false` (`src/coldpage/core.ts`; `cold-transfer.ts` is the reference).
+
+**No network.** Nothing is loaded from outside the file, and its security policy (`connect-src 'none'`) makes the browser refuse
+any connection the page might attempt. `test:page` checks both. The policy is a second lock: the machine should still be offline.
+
+**Using it**
+
+1. Copy `dist/cold-page.html` to the cold machine and compare its SHA-256 with the one the build printed. Open it in a browser.
+2. **Your wallet:** choose the network, type the recovery phrase and passphrase, press *Derive address*. Compare the address with
+   the one you know. The first time, take `cold-public.json` to the hot machine (download, or QR kind `pubkey`) for `hot-watch`.
+3. **Snapshot:** bring a fresh `cold-unshielded.snapshot.json` from `hot-watch`: drop the file, paste it, drop or paste the
+   `.mqr` frames from `tools/qr_scan.py` (`--clipboard` puts them on the clipboard), or scan with the camera.
+4. **Transfer:** recipient, token, amount in the smallest unit (STAR for NIGHT), validity in minutes. *Review* shows the plan.
+5. Type `SEND`. The page signs, decodes its own result again and compares it with the plan, then shows `tx.hex` as text, as a
+   download and as QR codes (kind `tx`). Take it to the hot machine and run `sponsor-submit` as usual.
+
+**Checks it keeps** (the same rules as `cold-transfer`, plus one): the snapshot must be for the chosen network, for the derived
+address, and at protocol version 2000000 or above; pending coins give a warning; the recipient must be an unshielded address of
+the chosen network; the amount is digits (or proper thousands commas) and no more than the snapshot holds; mainnet needs a box
+ticked; nothing is signed without a typed `SEND`; the prover the ledger is given only rejects. New: after signing, the bytes are
+decoded and refused unless they spend exactly the planned coins with this wallet's key, pay exactly the planned outputs, carry
+the planned expiry, and contain nothing else. QR input goes through the same frame checks as `qr-decode` (one session, SHA-256,
+4 MB decompression limit).
+
+**What it cannot check.** How old the snapshot is: a transfer built from a stale one is refused by the network (nothing is
+lost). And the clock: the expiry is set from the cold machine's clock, which the page shows before you sign.
+
+**Differences from the Node scripts.** The signing key is held in the page's memory as text between *Derive address* and
+closing the tab (*Clear everything* drops it sooner); the Node script holds it for a few seconds. A browser is a larger program
+than Node with its own history and extensions: use a private window with no extensions, and close it afterwards. The page
+stores nothing (no cookies, no local storage). On Tor Browser the "Safer" and "Safest" levels turn WebAssembly off, and the page
+then says the ledger module could not start.
+
+**Tests.** `npm test` covers the page's pure code (amounts, addresses, coin choice, snapshot checks, QR frames in both
+directions between Node and the page). `npm run test:sdk` builds the same transfer with the page's code and with the SDK facade
+(random throwaway keys, made-up snapshots; NIGHT with change, several coins, exact amount, another token) and compares them, and
+checks keys, addresses and `cold-public.json` against the Node scripts. `npm run test:page` drives the built page in headless
+Chromium through the whole flow and checks its output with the Node code. All three use fake data: none of them is a run on a network.
+
+**After a wallet SDK or ledger upgrade**, run `test:sdk` before trusting a new page: it is what notices if the SDK starts
+building transfers differently from the page.

@@ -23,11 +23,13 @@ keys. Do not add them without a design that keeps those keys off the hot machine
 | `src/hot-watch.ts`, `sponsor-register.ts`, `sponsor-submit.ts`, `wallet.ts` | Hot machine. `wallet.ts` (sponsor) must never be imported by a cold script. |
 | `src/snapshot.ts`, `txinfo.ts`, `crosscheck.ts`, `timefmt.ts`, `redact.ts`, `hex.ts`, `mqr.ts`, `qr-render.ts` | **Pure modules, no SDK imports.** Keep them that way: it is what makes them testable here. |
 | `src/qr-send.ts`, `qr-decode.ts`, `receiver/`, `tools/qr_scan.py` | QR transfer. `scripts/build-receiver.mjs` is build-time only. |
+| `src/mqr-core.ts` | The MQR1 frame pattern, splitting and joining: pure, shared by `mqr.ts` (Node) and `coldpage/mqr-web.ts`. |
+| `src/coldpage/`, `cold-page/cold-page.template.html`, `scripts/build-cold-page.mjs` | **Cold page** `dist/cold-page.html` (README section 10): cold side in a browser, built on the ledger 9 package directly, no wallet SDK wallets. `core.ts` takes the ledger as a parameter (no SDK import at run time); `keys.ts` uses the SDK's HD package; `ui.ts` is browser-only. Not yet run on a real network. |
 | `.githooks/pre-commit`, `.gitignore`, `.gitmessage`, `CONTRIBUTING.md` | Keep secrets and wallet data out of commits. |
 
 ## Commands
 
-`npm ci`, then `npm run build` (tsc and `dist/receiver.html`). **Scripts run from `dist/`, not `src/`:** rebuild after every edit. Typecheck with `npx tsc --noEmit`.
+`npm ci`, then `npm run build` (tsc, `dist/receiver.html` and `dist/cold-page.html`). **Scripts run from `dist/`, not `src/`:** rebuild after every edit. Typecheck with `npx tsc --noEmit`.
 Run scripts with `node dist/<name>.js` or the npm scripts (`cold:export-public`, `hot:watch`, `cold:transfer`, `hot:sponsor-register`, `hot:sponsor-submit`, `probe:cold-era`).
 **npm swallows flags:** write `npm run <script> -- --dry-run`. Env: `MIDNIGHT_NETWORK` (default `preprod`), `BLOCKFROST_PROJECT_ID`, `PROOF_SERVER_URL`,
 `COLD_MNEMONIC`/`COLD_PASSPHRASE`, `SPONSOR_MNEMONIC`/`SPONSOR_PASSPHRASE`, plus `ASSUME_LEDGER9`, `TTL_MINUTES`, `SNAPSHOT_FILE`, `COLD_PUBLIC_FILE`,
@@ -70,7 +72,7 @@ by the network); hot scripts stop if `cold-public.json` names another network. T
   fee from the final bytes. Change always returns to the sender (no change-address option); the recipient output sits in a "fallible" part by default.
 - Preprod and mainnet go through Blockfrost; Midnight-hosted endpoints there were retired. Run the proof server locally (9.0.0); it sees secret keys inside proof requests.
 - Use `read -rs` for secrets, one step at a time. A wrong passphrase silently gives a different empty wallet: compare the address before funding.
-- **QR frame format `MQR1`** exists three times and must agree (`mqr.ts`, the receiver page, `qr_scan.py`; same regex, `MAX_FRAMES = 9999`). On Tails the browser cannot use
+- **QR frame format `MQR1`** exists three times and must agree (`mqr-core.ts`, the receiver page, `qr_scan.py`; same regex, `MAX_FRAMES = 9999`). On Tails the browser cannot use
   the camera; use `tools/qr_scan.py` (OpenCV `>=4.8,<5`, wheels matching Tails' Python).
 - Do not guess SDK 2 signatures silently: read `node_modules/@midnightntwrk/*/dist/*.d.ts` or ask the owner, and mark unavoidable assumptions `SDK2-UNVERIFIED`
   (`grep -rn SDK2-UNVERIFIED src`). Do not call anything working on ledger 9 unless README section 4 shows it passed on Preprod; entries marked SDK 1.2 are history.
@@ -89,14 +91,20 @@ by the network); hot scripts stop if `cold-public.json` names another network. T
   `cold-public.json`, `wallet-state-*.json`, `.env`, `*.mqr`, `received-*`) is never staged and its `.gitignore` entries never loosened.
 - **Never bypass `.githooks/pre-commit`** (`--no-verify`, or `allow-secret` to force a commit through). If it blocks, stop and tell the owner what it flagged.
 - Commits: `type(scope): summary` plus honest trailers `Verified:` (`not run`, `tsc only`, `unit tests`, `preprod T3-T5`) and `Touches-cold: yes|no`. Cold-side files:
-  `cold-*`, `keygen`, `qr-send`, `qr-decode`, `config`, `keys`, `hex`, `mqr`, `qr-render`, `redact`, `snapshot`, `tools/qr_scan.py`, and the production dependencies.
+  `cold-*`, `keygen`, `qr-send`, `qr-decode`, `config`, `keys`, `hex`, `mqr`, `mqr-core`, `qr-render`, `redact`, `snapshot`, `tools/qr_scan.py`, the production dependencies,
+  and the cold page: `src/coldpage/`, its template and build script, `txinfo`, `timefmt`, and every package the build lists as inlined.
   Dependency changes get their own `build(deps)` commit with the lockfile.
 
 ## Testing
 
-There is **no test runner in the repository yet**. The pure modules were tested ad hoc outside it (fake transactions plus real snapshots); the SDK-dependent scripts are
-checked by `tsc` and the manual plan in `README.md`. If you add tests, put them in `tests/`, keep them SDK-free, and add an `npm test` script. Never verify a script by
-running it with a real seed.
+- `npm test`: SDK-free unit tests in `tests/` (pure modules, fake data). Keep them SDK-free.
+- `npm run test:sdk`: `tests-sdk/`, the only tests that import the SDK. They compare the cold page's code with the SDK facade
+  offline, with random throwaway keys and made-up snapshots. Run after any SDK or ledger upgrade and any change to `src/coldpage/`.
+- `npm run test:page`: drives the built `dist/cold-page.html` in headless Chromium (`scripts/test-cold-page.mjs`); build first.
+- The SDK-dependent scripts are checked by `tsc` and the manual plan in `README.md`. Passing these tests is not "verified":
+  that word means run on a real network. Never verify a script or the page with a real seed.
+- **The cold page must stay unable to reach a network:** nothing loaded from outside the file, `connect-src 'none'` in the
+  template, no storage. It must keep every check `cold-transfer` makes, and `verifyBuilt` on the bytes it shows.
 
 ## Midnight docs
 

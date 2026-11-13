@@ -7,8 +7,10 @@
     "node": ">=22.12"
   },
   "scripts": {
-    "build": "tsc && node scripts/build-receiver.mjs",
+    "build": "tsc && node scripts/build-receiver.mjs && node scripts/build-cold-page.mjs",
     "test": "tsc --project tsconfig.test.json && node --test dist-test/tests/*.js",
+    "test:page": "node scripts/test-cold-page.mjs",
+    "test:sdk": "tsc --project tsconfig.test.json && node --test --test-force-exit dist-test/tests-sdk/*.js",
     "keygen": "node dist/keygen.js",
     "cold:export-public": "node dist/cold-export-public.js",
     "hot:watch": "node dist/hot-watch.js",
