@@ -15,7 +15,7 @@ import * as L from '@midnightntwrk/wallet-sdk/ledger/v9';
 import { checkSnapshot, coldPublicJson, decodeAddress, encodeAddress, planTransfer, verifyBuilt } from '../dist/coldpage/core.js';
 import { deriveColdKeys } from '../dist/coldpage/keys.js';
 import { fromHex, toHex } from '../dist/hex.js';
-import { decodeMqrText, encodeFrames } from '../dist/mqr.js';
+import { decodeMqrText, encodeFrames, sha256hex } from '../dist/mqr.js';
 
 const NIGHT = '0'.repeat(64);
 const TOKEN = 'c0'.repeat(32);
@@ -223,6 +223,8 @@ try {
     const back = decodeMqrText(frames);
     assert.equal(back.kind, 'pubkey');
     assert.equal(back.payload.toString('utf8'), coldPublicJson(network, own));
+    // The same line qr-decode prints for the file it rebuilds.
+    assert.ok((await text('publicQrBox')).includes(`SHA-256: ${sha256hex(back.payload).slice(0, 16)}...`));
     assert.ok(await page(`document.querySelector('#publicQrBox svg') !== null`));
   });
 
@@ -252,6 +254,8 @@ try {
     assert.equal(await banner('snapErr'), '');
     assert.equal(await locked('s3'), false);
     assert.match(await text('snapChecks'), /ledger 9: protocol version 2001100/);
+    // The same value qr-send prints for the snapshot file.
+    assert.ok((await text('snapChecks')).includes(`SHA-256: ${sha256hex(Buffer.from(snapshot)).slice(0, 16)}...`));
     assert.match(await text('snapKv'), /5078500000 STAR \(5078\.500000 NIGHT\)/);
     assert.equal(await page(`document.getElementById('token').options.length`), 2);
     assert.equal(await page(`document.getElementById('token').value`), NIGHT);
@@ -324,6 +328,7 @@ try {
     const back = decodeMqrText(frames);
     assert.equal(back.kind, 'tx');
     assert.equal(back.payload.toString('utf8'), firstHex);
+    assert.ok((await text('txQrBox')).includes(`SHA-256: ${sha256hex(back.payload).slice(0, 16)}...`));
     assert.match(await page(`document.getElementById('txDl').href`), /^blob:/);
   });
 
@@ -362,6 +367,40 @@ try {
     assert.match(await text('planWarn'), /sends to yourself/);
   });
 
+  await step('the recipient address can be worked out from its recovery phrase; the phrase is not kept', async () => {
+    const otherPhrase = generateMnemonic(wordlist, 256);
+    const other = deriveColdKeys(L, otherPhrase, 'other pass', network);
+    await type('toPhrase', 'abandon abandon abandon');
+    await click('toDerive');
+    assert.match(await banner('toErr'), /Not a valid BIP-39/);
+    assert.equal(await page(`document.getElementById('to').value`), own.address, 'a refused phrase leaves the recipient alone');
+    await type('toPhrase', otherPhrase);
+    await type('toPass', 'other pass');
+    await click('toDerive');
+    assert.equal(await banner('toErr'), '');
+    assert.equal(await page(`document.getElementById('to').value`), other.address);
+    assert.equal(await page(`document.getElementById('toPhrase').value + document.getElementById('toPass').value`), '');
+    assert.match(await text('toNote'), /with a passphrase/);
+    await click('review');
+    assert.equal(await banner('planErr'), '');
+    assert.ok((await text('planKv')).includes(other.address));
+    assert.match(await text('planWarn'), /worked out from a recovery phrase/);
+    assert.ok(!(await page(`document.documentElement.outerHTML`)).includes(otherPhrase), 'the phrase is nowhere in the page');
+    // Typing another address by hand drops the note and the warning.
+    await type('to', recipient);
+    assert.equal(await visible('toNote'), false);
+    await click('review');
+    assert.doesNotMatch(await text('planWarn'), /worked out from a recovery phrase/);
+  });
+
+  await step('the review shows this machine\'s clock on its own, large and bold', async () => {
+    assert.match(await text('clock'), /\d{4}/);
+    const style = await page(`(() => { const c = getComputedStyle(document.getElementById('clock')); return c.fontWeight + ' ' + parseFloat(c.fontSize); })()`);
+    const [weight, size] = style.split(' ').map(Number);
+    assert.ok(weight >= 700 && size >= 24, `clock style ${style}`);
+    assert.match(await page(`document.querySelector('.clockbox').textContent`), /Check that this is the correct date and time/);
+  });
+
   await step('editing the phrase forgets the keys and everything after', async () => {
     await type('pass', 'another');
     assert.equal(await visible('keysOut'), false);
@@ -372,7 +411,7 @@ try {
 
   await step('Clear everything empties the fields', async () => {
     await click('clear');
-    assert.equal(await page(`['phrase', 'pass', 'snapText', 'to', 'amount', 'confirm'].map((id) => document.getElementById(id).value).join('')`), '');
+    assert.equal(await page(`['phrase', 'pass', 'snapText', 'to', 'toPhrase', 'toPass', 'amount', 'confirm'].map((id) => document.getElementById(id).value).join('')`), '');
     assert.equal(await locked('s2'), true);
   });
 

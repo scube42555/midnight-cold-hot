@@ -27,8 +27,8 @@ import {
   verifyBuilt,
   wholeSeconds,
 } from './core.js';
-import { deriveColdKeys } from './keys.js';
-import { type Frame, decodeFramesWeb, encodeFramesWeb, parseFrame } from './mqr-web.js';
+import { deriveAddressOnly, deriveColdKeys } from './keys.js';
+import { type Frame, decodeFramesWeb, encodeFramesWeb, parseFrame, payloadDigest } from './mqr-web.js';
 
 // jsqr is a CommonJS bundle: depending on the tool that reads it, the function is the module itself or its `default`.
 const jsQR: typeof jsqrModule.default = jsqrModule.default ?? (jsqrModule as unknown as typeof jsqrModule.default);
@@ -72,6 +72,8 @@ let keys: ColdKeys | undefined;
 let snapshot: SnapshotInfo | undefined;
 let reviewed: { plan: Plan; ttlMinutes: number; recipient: string } | undefined;
 let signedFromThisSnapshot = false;
+/** The recipient address last filled in from a phrase in step 3, so the review can say where it came from. */
+let recipientFromPhrase: string | undefined;
 
 if (navigator.onLine) show($('online'), true);
 window.addEventListener('online', () => show($('online'), true));
@@ -119,7 +121,8 @@ const stopQr = (box: HTMLElement): void => {
 /** Show `text` as a cycling sequence of MQR1 QR codes inside `box`, with the frames as text underneath. */
 const showQr = (box: HTMLElement, kind: string, text: string, label: string): void => {
   stopQr(box);
-  const { frames, session } = encodeFramesWeb(kind, new TextEncoder().encode(text), crypto.getRandomValues(new Uint8Array(3)));
+  const payload = new TextEncoder().encode(text);
+  const { frames, session } = encodeFramesWeb(kind, payload, crypto.getRandomValues(new Uint8Array(3)));
   const svgs = frames.map(svgOf); // our own data only
   const wrap = el('div', undefined, 'qrbox');
   const qr = el('div', undefined, 'qr');
@@ -129,6 +132,7 @@ const showQr = (box: HTMLElement, kind: string, text: string, label: string): vo
   meta.append(
     status,
     el('p', `${label}: MQR1 kind "${kind}", session ${session}. Receive it on the hot machine with receiver.html or qr_scan.py, then decode with qr-decode.`),
+    el('p', `SHA-256: ${payloadDigest(payload)}...  (qr-decode prints the same value on the hot machine; compare them)`, 'digest'),
     el('p', 'Frames as text:'),
     raw,
   );
@@ -178,6 +182,7 @@ const resetFrom = (n: number): void => {
     $('token').replaceChildren();
     unlock('s3', false);
     button('review').disabled = true;
+    button('toDerive').disabled = true;
   }
   if (n <= 3) {
     reviewed = undefined;
@@ -207,6 +212,7 @@ const readNetwork = (): void => {
 input('network').addEventListener('change', () => {
   show($('mainnetRow'), input('network').value === 'mainnet');
   $<HTMLInputElement>('mainnetOk').checked = false;
+  forgetRecipientPhrase(); // an address worked out for the other network is of no use now
   resetFrom(1);
 });
 for (const id of ['phrase', 'pass']) input(id).addEventListener('input', () => resetFrom(1));
@@ -247,12 +253,22 @@ button('publicQr').addEventListener('click', () => {
   }
 });
 
-button('clear').addEventListener('click', () => {
-  for (const id of ['phrase', 'pass', 'snapText', 'to', 'amount', 'confirm']) input(id).value = '';
+const clearFields = (): void => {
+  for (const id of ['phrase', 'pass', 'snapText', 'to', 'toPhrase', 'toPass', 'amount', 'confirm']) input(id).value = '';
+  forgetRecipientPhrase();
   input('ttl').value = '120';
   $('amountEcho').textContent = '';
-  for (const id of ['keysErr', 'snapErr', 'planErr', 'signErr']) setErr(id, '');
+  for (const id of ['keysErr', 'snapErr', 'planErr', 'signErr', 'toErr']) setErr(id, '');
   resetFrom(1);
+};
+button('clear').addEventListener('click', clearFields);
+// Firefox and Tor Browser put typed text back into form fields when a page is reloaded. A reload must start empty, like
+// the rest of the page does: `pageshow` runs after the browser has restored the fields.
+window.addEventListener('pageshow', () => {
+  input('network').value = 'preprod';
+  $<HTMLInputElement>('mainnetOk').checked = false;
+  show($('mainnetRow'), false);
+  clearFields();
 });
 
 // ---------------------------------------------------------------- step 2: snapshot
@@ -334,10 +350,11 @@ const snapshotTextFrom = (text: string): { json: string; note: string } => {
     if (d.kind !== 'snapshot') throw new Error(`These frames carry "${d.kind}", not a snapshot. Send it with: qr-send snapshot <file>.`);
     return {
       json: new TextDecoder('utf-8', { fatal: true }).decode(d.payload),
-      note: `Joined ${d.total} MQR1 frame(s), session ${d.session}; checksum correct.`,
+      note: `Joined ${d.total} MQR1 frame(s), session ${d.session}; checksum correct. SHA-256: ${payloadDigest(d.payload)}...  (qr-send printed the same value on the hot machine; compare them)`,
     };
   }
-  return { json: text, note: '' };
+  // A file loaded or dropped here hashes like the file itself; pasted text can differ from the file by a line ending.
+  return { json: text, note: `SHA-256 of this text: ${payloadDigest(new TextEncoder().encode(text))}...  (for a loaded file, the start of what sha256sum prints for it on the hot machine)` };
 };
 
 function runSnapshotCheck(): void {
@@ -394,6 +411,7 @@ function runSnapshotCheck(): void {
   updateAmountHint();
   unlock('s3', true);
   button('review').disabled = false;
+  button('toDerive').disabled = false;
 }
 
 // ---------------------------------------------------------------- camera (optional)
@@ -493,6 +511,41 @@ input('token').addEventListener('change', () => {
   updateAmountHint();
 });
 
+function forgetRecipientPhrase(): void {
+  recipientFromPhrase = undefined;
+  $('toNote').textContent = '';
+  show($('toNote'), false);
+}
+
+// The recipient's phrase is a secret of another wallet: it is used once for the address, then both fields are emptied.
+button('toDerive').addEventListener('click', () => {
+  resetFrom(3);
+  setErr('toErr', '');
+  forgetRecipientPhrase();
+  let address: string;
+  try {
+    if (!L) throw new Error('The ledger module has not started yet.');
+    address = deriveAddressOnly(L, input('toPhrase').value, input('toPass').value, network);
+  } catch (e) {
+    setErr('toErr', messageOf(e));
+    return;
+  }
+  const hadPassphrase = input('toPass').value !== '';
+  input('toPhrase').value = '';
+  input('toPass').value = '';
+  input('to').value = address;
+  recipientFromPhrase = address;
+  $('toNote').textContent =
+    `Recipient address worked out from the phrase (${hadPassphrase ? 'with' : 'without'} a passphrase) and filled in above; the phrase was cleared. ` +
+    'Compare it with the address you know for that wallet if you can: a mistyped passphrase gives a different, empty wallet, and nothing warns you.';
+  show($('toNote'), true);
+  $<HTMLDetailsElement>('toPhraseBox').open = false;
+  updateAmountHint();
+});
+input('to').addEventListener('input', () => {
+  if (input('to').value.trim() !== recipientFromPhrase) forgetRecipientPhrase();
+});
+
 button('review').addEventListener('click', () => {
   resetFrom(3);
   setErr('planErr', '');
@@ -519,6 +572,9 @@ button('review').addEventListener('click', () => {
 
   const warn = $('planWarn');
   if (plan.recipientHex === keys.addressHex) warn.append(el('div', 'The recipient is this wallet\'s own address: the transfer sends to yourself.', 'banner warn'));
+  if (recipient === recipientFromPhrase) {
+    warn.append(el('div', 'The recipient address was worked out from a recovery phrase typed in step 3. If that phrase or its passphrase was not the one you meant, the funds go to a different wallet.', 'banner warn'));
+  }
   if (snapshot.pendingCount > 0) warn.append(el('div', `The snapshot lists ${snapshot.pendingCount} pending coin(s); this transfer may fail.`, 'banner warn'));
   if (signedFromThisSnapshot) {
     warn.append(el('div', 'A transfer was already signed from this snapshot on this page. They spend the same coins, so the network will accept only one of them.', 'banner warn'));

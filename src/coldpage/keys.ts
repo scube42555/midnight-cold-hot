@@ -26,3 +26,10 @@ export const deriveColdKeys = (L: Ledger, phrase: string, passphrase: string, ne
     masterSeed.fill(0);
   }
 };
+
+/**
+ * Only the address of a wallet, for sending to a wallet whose phrase is at hand but whose address is not. The key that is
+ * derived on the way is dropped here and never reaches the caller.
+ */
+export const deriveAddressOnly = (L: Ledger, phrase: string, passphrase: string, network: NetworkName): string =>
+  deriveColdKeys(L, phrase, passphrase, network).address;

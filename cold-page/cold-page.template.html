@@ -76,9 +76,14 @@ td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mon
 .qrmeta pre, #witness { white-space: pre-wrap; word-break: break-all; }
 .qr svg { display: block; width: 100%; height: auto; }
 .qrmeta { color: var(--muted); font-size: 13px; }
+.qrmeta .digest { color: var(--ink); font: 600 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
 .tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 12px; background: var(--info-bg); }
 .tag.you { background: var(--ok-bg); color: var(--ok); }
+details { margin: 8px 0; } summary { cursor: pointer; color: var(--accent); }
+.clockbox { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 14px 0; }
+.clocklabel { color: var(--muted); }
+.clock { font: 700 26px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 2px 0 6px; overflow-wrap: anywhere; }
 [hidden] { display: none !important; }
 @media (max-width: 640px) { .qrbox { grid-template-columns: 1fr; } dl.kv { grid-template-columns: 1fr; } dl.kv dd { margin-bottom: 6px; } }
 </style>
@@ -98,7 +103,7 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
     <h2><span class="n">1</span>Your wallet</h2>
     <div class="row">
       <div><label for="network">Network</label>
-        <select id="network">
+        <select id="network" autocomplete="off">
           <option value="preprod" selected>Preprod (testing)</option>
           <option value="preview">Preview (testing)</option>
           <option value="undeployed">Undeployed (local)</option>
@@ -106,7 +111,7 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
         </select></div>
     </div>
     <div id="mainnetRow" class="banner warn" hidden>
-      <label for="mainnetOk" style="font-weight:400;margin:0"><input id="mainnetOk" type="checkbox"> Mainnet moves real funds and this page
+      <label for="mainnetOk" style="font-weight:400;margin:0"><input id="mainnetOk" type="checkbox" autocomplete="off"> Mainnet moves real funds and this page
         has not been run on mainnet. I have completed the test plan on preprod and want to continue.</label>
     </div>
     <label for="phrase">Recovery phrase <span class="hint">(12 to 24 words; stays on this page)</span></label>
@@ -154,7 +159,7 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
     </div>
     <div id="camBox" hidden><p id="camStatus" class="qrmeta"></p><video id="video" playsinline muted></video><canvas id="canvas" hidden></canvas></div>
     <label for="snapText">Or paste <span class="hint">(the snapshot JSON, or MQR1 frames of kind "snapshot")</span></label>
-    <textarea id="snapText" rows="4" spellcheck="false"></textarea>
+    <textarea id="snapText" rows="4" spellcheck="false" autocomplete="off"></textarea>
     <div class="actions"><button id="snapCheck" type="button" disabled>Check snapshot</button></div>
     <div id="snapErr" class="banner err" hidden></div>
     <div id="snapOut" hidden>
@@ -167,6 +172,18 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
     <h2><span class="n">3</span>The transfer</h2>
     <label for="to">Recipient address <span class="hint">(unshielded, starts with mn_addr)</span></label>
     <textarea id="to" rows="2" spellcheck="false" autocomplete="off" autocapitalize="off" style="min-height:0"></textarea>
+    <details id="toPhraseBox">
+      <summary>Or work out the recipient address from the recipient wallet's recovery phrase</summary>
+      <p class="qrmeta">For a wallet of your own whose address is not at hand. Only its address is worked out: the phrase is not kept
+        and nothing is signed with it. Never type somebody else's phrase, and never a phrase on a machine that is online.</p>
+      <label for="toPhrase">Recipient wallet's recovery phrase <span class="hint">(12 to 24 words)</span></label>
+      <textarea id="toPhrase" rows="3" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      <label for="toPass">Its passphrase <span class="hint">(optional BIP-39 "25th word", used exactly as typed; leave empty if it has none)</span></label>
+      <input id="toPass" type="password" autocomplete="off" spellcheck="false">
+      <div class="actions"><button id="toDerive" class="secondary" type="button" disabled>Fill in the recipient address</button></div>
+      <div id="toErr" class="banner err" hidden></div>
+    </details>
+    <div id="toNote" class="banner info" hidden></div>
     <div class="row">
       <div style="flex:1"><label for="token">Token</label><select id="token"></select></div>
     </div>
@@ -186,8 +203,12 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
     <div id="planWarn"></div>
     <dl class="kv" id="planKv"></dl>
     <div class="tablewrap" id="planCoins"></div>
-    <p>The expiry time is set from <strong>this machine's clock</strong> when you sign. It now shows
-      <span class="mono" id="clock"></span>. If that is wrong, the hot machine may find the transfer already expired, or valid far longer than you meant.</p>
+    <div class="clockbox">
+      <div class="clocklabel">This machine's clock now shows</div>
+      <div class="clock" id="clock"></div>
+      <p><strong>Check that this is the correct date and time.</strong> The expiry time is set from this clock when you sign.
+        If it is wrong, the hot machine may find the transfer already expired, or valid far longer than you meant.</p>
+    </div>
     <p>Check the recipient and the amount above. Type <strong>SEND</strong> to sign.</p>
     <div class="row"><div><label for="confirm">Confirmation</label><input id="confirm" type="text" autocomplete="off" spellcheck="false" style="width:10em"></div>
       <div><button id="sign" type="button" disabled>Sign</button></div></div>

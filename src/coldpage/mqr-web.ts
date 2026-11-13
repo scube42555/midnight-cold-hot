@@ -10,6 +10,12 @@ export { parseFrame, type Frame } from '../mqr-core.js';
 
 const checksum = (compressed: Uint8Array): string => toHex(sha256(compressed)).slice(0, 32);
 
+/**
+ * What qr-send and qr-decode print for a person to compare: the first 16 hex characters of the SHA-256 of the
+ * payload itself (the file's bytes, before compression). Not the checksum inside the frames, which covers the compressed form.
+ */
+export const payloadDigest = (payload: Uint8Array): string => toHex(sha256(payload)).slice(0, 16);
+
 /** `session` is 3 random bytes from the caller, so this module needs no source of randomness of its own. */
 export const encodeFramesWeb = (
   kind: string,
