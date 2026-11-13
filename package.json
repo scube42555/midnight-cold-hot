@@ -26,7 +26,11 @@
     "rxjs": "7.8.2"
   },
   "devDependencies": {
+    "@noble/hashes": "2.4.0",
+    "@scure/base": "2.4.0",
     "@types/node": "24.10.1",
+    "esbuild": "0.25.10",
+    "fflate": "0.8.3",
     "jsqr": "1.4.0",
     "typescript": "5.9.3"
   }
