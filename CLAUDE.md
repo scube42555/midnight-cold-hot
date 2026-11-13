@@ -24,7 +24,7 @@ keys. Do not add them without a design that keeps those keys off the hot machine
 | `src/snapshot.ts`, `txinfo.ts`, `crosscheck.ts`, `timefmt.ts`, `redact.ts`, `hex.ts`, `mqr.ts`, `qr-render.ts` | **Pure modules, no SDK imports.** Keep them that way: it is what makes them testable here. |
 | `src/qr-send.ts`, `qr-decode.ts`, `receiver/`, `tools/qr_scan.py` | QR transfer. `scripts/build-receiver.mjs` is build-time only. |
 | `src/mqr-core.ts` | The MQR1 frame pattern, splitting and joining: pure, shared by `mqr.ts` (Node) and `coldpage/mqr-web.ts`. |
-| `src/coldpage/`, `cold-page/cold-page.template.html`, `scripts/build-cold-page.mjs` | **Cold page** `dist/cold-page.html` (README section 10): cold side in a browser, built on the ledger 9 package directly, no wallet SDK wallets. `core.ts` takes the ledger as a parameter (no SDK import at run time); `keys.ts` uses the SDK's HD package; `ui.ts` is browser-only. Not yet run on a real network. |
+| `src/coldpage/`, `cold-page/cold-page.template.html`, `scripts/build-cold-page.mjs` | **Cold page** `dist/cold-page.html` (README section 10): cold side in a browser, built on the ledger 9 package directly, no wallet SDK wallets. `core.ts` takes the ledger as a parameter (no SDK import at run time); `keys.ts` uses the SDK's HD package; `ui.ts` is browser-only. Two NIGHT transfers passed on Preprod from Tails (T30–T32); README section 6 lists what is not yet run. |
 | `.githooks/pre-commit`, `.gitignore`, `.gitmessage`, `CONTRIBUTING.md` | Keep secrets and wallet data out of commits. |
 
 ## Commands

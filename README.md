@@ -23,7 +23,7 @@ must never hold real funds.
 | `sponsor-register` | hot | `SPONSOR_MNEMONIC` or `SPONSOR_SEED`; `SPONSOR_PASSPHRASE` (optional) | One-time: registers the sponsor's NIGHT for DUST |
 | `cold-transfer` | cold | `COLD_MNEMONIC` or `COLD_SEED`; `COLD_PASSPHRASE` (optional) | Builds, signs, finalizes the transfer, writes `tx.hex` |
 | `sponsor-submit` | hot | `SPONSOR_MNEMONIC` or `SPONSOR_SEED`; `SPONSOR_PASSPHRASE` (optional) | Adds DUST for the fee and submits `tx.hex` |
-| `dist/cold-page.html` | cold, in a browser | recovery phrase typed into the page | Does the work of `cold-export-public` and `cold-transfer` without Node (section 10). **Not yet run on a real network** |
+| `dist/cold-page.html` | cold, in a browser | recovery phrase typed into the page | Does the work of `cold-export-public` and `cold-transfer` without Node (section 10). Two transfers passed on Preprod (T30–T32) |
 
 The cold and sponsor wallets use different variable names on purpose, so they cannot be mixed up.
 The scripts delete the variable from the process environment once they have read it. A BIP-39 passphrase goes in `COLD_PASSPHRASE` or `SPONSOR_PASSPHRASE` (section 3).
@@ -225,9 +225,9 @@ after the upgrade. "Not yet run" means nobody has run it on that version. Tests 
 | T27 | `cold-transfer` builds, signs and finalizes a ledger 9 transaction offline, and refuses a snapshot from before ledger 9 | Passed (SDK 2): offline, 4 s, protocol version 2000000, `tx.hex` of 760 bytes, **the proof stub was not called**. The refusal of an old snapshot: not yet run |
 | T28 *new* | Sponsor first sync from scratch (~9.5 h on Preprod); then adopts, validates, balances, proves and submits the transaction; full flow end to end | Passed (SDK 2, 11 Nov 2026): transaction `00ecd050673404bf3a25b187265858ccfa3b880df279d86c9259bb567ca74b6407` accepted on-chain (tx hash `0x7df566e3aed4abe1dab1226fea1a075f72a2037cc77e38dde060cadec10f8ce4`). An earlier `tx.hex` expired during the sync; the TTL check added in this session caught that case |
 | T29 *new* | QR transfer both directions: snapshot hot→cold via `receiver.html` and Python scanner; `tx.hex` cold→hot via `qr-send` HTML and `receiver.html` | Passed (SDK 2, 11 Nov 2026): `receiver.html` on ArchLinux dev machine (both directions); Python scanner on TailsOS (hot→cold snapshot); `qr-send` HTML page on cold machine (cold→hot) |
-| T30 *new* | Cold page: the address and `cold-public.json` it shows match `cold-export-public` for the same phrase and passphrase | Not yet run on a real wallet. On fake data: passed (`test:sdk`, `test:page`) |
-| T31 *new* | Cold page offline on the cold machine: loads a real `hot-watch` snapshot, signs after `SEND`, and `sponsor-submit` accepts and submits its `tx.hex` | **Not yet run** |
-| T32 *new* | Cold page in the cold machine's own browser (Tails / Tor Browser): the ledger module starts, file and paste input work | **Not yet run** |
+| T30 *new* | Cold page: the address and `cold-public.json` it shows match `cold-export-public` for the same phrase and passphrase | Passed on Preprod (2026-11-13): the page's `cold-public.json` worked on the hot machine as the one from `cold-export-public` does. Passphrase case not reported. On fake data: passed (`test:sdk`, `test:page`) |
+| T31 *new* | Cold page offline on the cold machine: loads a real `hot-watch` snapshot, signs after `SEND`, and `sponsor-submit` accepts and submits its `tx.hex` | **Passed on Preprod (2026-11-13)**: `sponsor-submit` submitted the page's `tx.hex` and the transfer landed. Repeated the same day with the later build (snapshot loaded as a file, recipient address worked out from its recovery phrase, `tx.hex` sent back by QR with the SHA-256 equal on both sides): landed too. NIGHT only; other tokens not tried |
+| T32 *new* | Cold page in the cold machine's own browser (Tails / Tor Browser): the ledger module starts, file and paste input work | Passed on Tails with Tor Browser (2026-11-13, security level not noted): the ledger module started; the snapshot came in by `qr_scan.py --clipboard` and paste, and in a second run as a loaded file (the SHA-256 line showed). A reload emptied every field. Camera not tried |
 | T33 *new* | Cold page refuses a snapshot for another network, another wallet or from before ledger 9, and an amount above the balance | Not yet run on real files. On fake data: passed (`test:page`) |
 
 **How the new tests are run**
@@ -452,12 +452,16 @@ parsing it.
   comparison with `cold-transfer` output) and T22 (stale snapshot warning) were not explicitly checked.
 - The sponsor's DUST cap and regeneration rate lines read wallet internals and may not appear if the internal shape changes.
 - What 1AM means by "fee 1 DUST" (section 9).
-- **The cold page (`dist/cold-page.html`, section 10): not yet run on a real network.** It builds the transaction with the ledger 9
-  package directly, not through the wallet SDK. On fake data its transactions have the same inputs, outputs, expiry and placement
-  as the SDK's and the SDK's own reader accepts them, but no transaction made by the page has been submitted (T30–T33). It has only
-  been opened in Chromium on the dev machine: not in Tor Browser, not on Tails, not on the 2011 cold machine. Its camera input has not been tried.
-- `qr_scan.py --clipboard`: not yet run on a real machine. Checked with a fake camera and fake clipboard tools (tool
-  order, fallbacks, nothing copied on a checksum mismatch); none of `wl-copy`, `xclip`, `xsel` or Tk was available to test for real.
+- **The cold page (`dist/cold-page.html`, section 10): two transfers verified, the rest not.** On 2026-11-13 two NIGHT transfers
+  built and signed by the page on Tails (Tor Browser) were submitted by `sponsor-submit` and landed on Preprod (T30–T32), the
+  second with the snapshot loaded as a file, the recipient address worked out from that wallet's recovery phrase (the page
+  warned about it on the review), and `tx.hex` returned by QR with the same SHA-256 shown by the page and by `qr-decode`. The
+  large clock and the emptying of fields on reload were tried on Tails and looked right. Still not run on a real network: a non-NIGHT token, the refusals on real files (T33), camera
+  input, other browsers, and mainnet. The page builds the transaction with the ledger 9 package directly, not
+  through the wallet SDK; after any SDK or ledger upgrade run `npm run test:sdk` and repeat T31.
+- `qr_scan.py --clipboard`: used on Tails on 2026-11-13 to paste a snapshot into the cold page, which accepted it. Which
+  clipboard tool it used there (`wl-copy`, `xclip`, `xsel` or the Tk window) was not noted; the other paths are checked only
+  with fake tools.
 
 ## 7. QR transfer instead of a USB stick
 
@@ -508,7 +512,9 @@ node dist/qr-decode.js received-tx-XXXXXX.mqr tx.hex
 ```
 
 `qr-send` prints the first 16 hex characters of the file's SHA-256, and `qr-decode` prints the
-same for the file it rebuilt. Compare them by eye; they must match.
+same for the file it rebuilt. Compare them by eye; they must match. The cold page (section 10) shows the same value:
+next to the QR codes it sends, and in the snapshot checks for frames it receives. `qr_scan.py` does not print it: it only
+collects frames and never decompresses them, so the value appears where the frames are decoded (`qr-decode` or the page).
 
 **Testing without a camera:** `qr-send ... --mqr frames.mqr`, then `qr-decode frames.mqr out`.
 You can also paste the frames into the receiver page's paste box.
@@ -727,8 +733,8 @@ disconnects. The scripts now redact it (section 2). Revoke any token that has be
 ## 10. Cold page: the cold side in a browser
 
 `npm run build` also writes `dist/cold-page.html`: one self-contained file (about 15 MB) that does what `cold-export-public`
-and `cold-transfer` do, in a browser, with no Node on the cold machine. **Status: built and tested on fake data only; not yet
-run on a real network (T30–T33).** Until those pass, the Node scripts are the verified path.
+and `cold-transfer` do, in a browser, with no Node on the cold machine. **Status: two NIGHT transfers made with it on Tails landed on
+Preprod (T30–T32, 2026-11-13); section 6 lists what is still not run.** The Node scripts remain the path with the most testing.
 
 **What it is.** The page holds the ledger 9 WebAssembly module (the same one the wallet SDK uses), its JavaScript glue, and a
 few plain-JavaScript libraries: `@scure/bip39`, `@scure/bip32` and the SDK's HD package for the keys, `fflate` and
@@ -746,7 +752,12 @@ any connection the page might attempt. `test:page` checks both. The policy is a 
    the one you know. The first time, take `cold-public.json` to the hot machine (download, or QR kind `pubkey`) for `hot-watch`.
 3. **Snapshot:** bring a fresh `cold-unshielded.snapshot.json` from `hot-watch`: drop the file, paste it, drop or paste the
    `.mqr` frames from `tools/qr_scan.py` (`--clipboard` puts them on the clipboard), or scan with the camera.
-4. **Transfer:** recipient, token, amount in the smallest unit (STAR for NIGHT), validity in minutes. *Review* shows the plan.
+4. **Transfer:** recipient, token, amount in the smallest unit (STAR for NIGHT), validity in minutes. *Review* shows the plan,
+   and the cold machine's clock in large type: check it, because the expiry is counted from it.
+   If the recipient is another wallet of yours and you have its recovery phrase but not its address, open *Or work out the
+   recipient address from the recipient wallet's recovery phrase*: the page fills in the address and clears the phrase. Only
+   the address is worked out; nothing is signed with that phrase. A mistyped passphrase gives a different, empty wallet with no
+   warning, so compare the address when you can.
 5. Type `SEND`. The page signs, decodes its own result again and compares it with the plan, then shows `tx.hex` as text, as a
    download and as QR codes (kind `tx`). Take it to the hot machine and run `sponsor-submit` as usual.
 
